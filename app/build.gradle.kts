@@ -62,6 +62,17 @@ android {
                 "proguard-rules.pro",
             )
         }
+        create("preview") {
+            // Performance-testable CI build: release optimizations, but signed with
+            // the repository's debug key and installed next to the stable app.
+            initWith(getByName("release"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            isDebuggable = false
+            resValue("string", "app_name", "DUBL Dev")
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     buildFeatures {

@@ -40,12 +40,12 @@ jobs:
           cache-provider: basic
 
       - name: Test and build development APK
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assemblePreview
 
       - name: Prepare APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/DUBL-Android-dev.apk
+          cp app/build/outputs/apk/preview/app-preview.apk out/DUBL-Android-dev.apk
 
       - name: Upload development APK
         uses: actions/upload-artifact@v4
