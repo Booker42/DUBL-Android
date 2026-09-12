@@ -22,7 +22,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -52,12 +51,10 @@ import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublAccentSoft
-import com.dubl.character.android.ui.theme.DublBorder
 import com.dubl.character.android.ui.theme.DublGold
 import com.dubl.character.android.ui.theme.DublHealth
 import com.dubl.character.android.ui.theme.DublMana
 import com.dubl.character.android.ui.theme.DublStamina
-import com.dubl.character.android.ui.theme.DublSurfaceInset
 import java.text.DecimalFormat
 
 enum class CharacterResource {
@@ -180,23 +177,23 @@ fun OverviewScreen(controller: CharacterController) {
 private fun CharacterHero(character: DublCharacter, onEdit: () -> Unit) {
     DublCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(18.dp),
+        contentPadding = PaddingValues(16.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
-                modifier = Modifier.size(70.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.size(62.dp),
+                shape = RoundedCornerShape(15.dp),
                 color = DublAccentSoft,
-                border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.65f)),
+                border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.62f)),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = character.name.trim().firstOrNull()?.uppercase() ?: "D",
-                        fontSize = 28.sp,
+                        fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -204,69 +201,76 @@ private fun CharacterHero(character: DublCharacter, onEdit: () -> Unit) {
             }
 
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = character.name,
-                    style = MaterialTheme.typography.headlineMedium,
-                    maxLines = 2,
-                )
-                if (character.concept.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = character.concept,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                    )
-                }
-                Spacer(Modifier.height(9.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MetaPill("Опыт ${character.experience}", Modifier.weight(1f))
-                    MetaPill("Очки способностей ${character.abilityPoints}", Modifier.weight(1f))
+                    Text(
+                        text = character.name,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                    )
+                    TextButton(onClick = onEdit) {
+                        Text("Изменить")
+                    }
                 }
-            }
-        }
 
-        Spacer(Modifier.height(14.dp))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = if (character.legs >= 3) "${character.legs} ног" else "2 ноги",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = onEdit) {
-                Text("Изменить персонажа")
+                Spacer(Modifier.height(7.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    MetaPill(
+                        label = "Опыт",
+                        value = character.experience.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    MetaPill(
+                        label = "Очки способностей",
+                        value = character.abilityPoints.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MetaPill(text: String, modifier: Modifier = Modifier) {
+private fun MetaPill(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(7.dp),
-        color = DublSurfaceInset,
-        border = BorderStroke(1.dp, DublBorder),
+        shape = RoundedCornerShape(8.dp),
+        color = DublGold.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.46f)),
     ) {
-        Text(
-            text = text,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
+        Column(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = DublGold.copy(alpha = 0.82f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+            Text(
+                text = value,
+                fontSize = 17.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = DublGold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -476,6 +480,17 @@ private fun AttributeGrid(
     }
 }
 
+private fun attributeAccent(id: AttributeId): Color = when (id) {
+    AttributeId.STRENGTH -> Color(0xFFB96363)
+    AttributeId.DEXTERITY -> Color(0xFFC08D52)
+    AttributeId.CONSTITUTION -> Color(0xFF7FA06F)
+    AttributeId.SPEED -> Color(0xFF65A0A8)
+    AttributeId.INTELLIGENCE -> Color(0xFF718FB8)
+    AttributeId.PERCEPTION -> Color(0xFF8E80B5)
+    AttributeId.WILL -> Color(0xFFA87193)
+    AttributeId.CHARISMA -> Color(0xFFC07E6D)
+}
+
 @Composable
 private fun AttributeCard(
     id: AttributeId,
@@ -486,27 +501,29 @@ private fun AttributeCard(
     val raw = character.attributeRaw(id)
     val total = character.attribute(id)
     val sizeDelta = total - raw
+    val accent = attributeAccent(id)
 
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.85f)),
+        color = accent.copy(alpha = 0.055f),
+        border = BorderStroke(1.5.dp, accent.copy(alpha = 0.72f)),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     text = id.title,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (sizeDelta != 0) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         text = "База $raw · размер ${signed(sizeDelta)}",
                         style = MaterialTheme.typography.labelLarge,
@@ -516,9 +533,10 @@ private fun AttributeCard(
             }
             Text(
                 text = total.toString(),
-                fontSize = 30.sp,
-                lineHeight = 34.sp,
+                fontSize = 31.sp,
+                lineHeight = 35.sp,
                 fontWeight = FontWeight.Bold,
+                color = accent,
             )
         }
     }
