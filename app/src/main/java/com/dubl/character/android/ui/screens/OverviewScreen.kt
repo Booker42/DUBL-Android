@@ -115,6 +115,12 @@ private enum class RollMode(val title: String) {
     HINDRANCE("Помеха"),
 }
 
+private enum class RollFollowUp(val buttonTitle: String) {
+    ADVANTAGE_DIE("Бросить кость преимущества"),
+    CRITICAL_FAILURE_CONFIRMATION("Бросить кость подтверждения"),
+    SUPERIORITY_DIE("Бросить кость превосходства"),
+}
+
 private sealed interface UndoAction {
     data class Resource(val resource: CharacterResource, val appliedDelta: Int) : UndoAction
     data class Attribute(val id: AttributeId, val appliedDelta: Int) : UndoAction
@@ -137,10 +143,14 @@ private data class RollResult(
     val effectCount: Int,
     val dice: List<Int>,
     val chosenIndices: Set<Int>,
-    val skillBonus: Int,
+    val checkBonus: Int,
+    val checkBonusLabel: String,
     val situationalBonus: Int,
     val total: Int,
     val note: String? = null,
+    val followUp: RollFollowUp? = null,
+    val followUpDie: Int? = null,
+    val grantedAdvantageDie: Boolean = false,
 )
 
 private data class StatInfo(
@@ -176,6 +186,7 @@ fun OverviewScreen(controller: CharacterController) {
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
     var selectedAttribute by remember { mutableStateOf<AttributeId?>(null) }
     var selectedStat by remember { mutableStateOf<StatId?>(null) }
+    var showFortitudeRoll by remember { mutableStateOf(false) }
     var showResourceVisibility by remember { mutableStateOf(false) }
     var showNameEdit by remember { mutableStateOf(false) }
     var showExperienceEdit by remember { mutableStateOf(false) }
@@ -296,9 +307,22 @@ fun OverviewScreen(controller: CharacterController) {
             }
 
             item {
+                SectionTitle("Характеристики", trailing = "Нажмите, чтобы изменить")
+                Spacer(Modifier.height(8.dp))
+                AttributeGrid(
+                    character = character,
+                    onAttributeClick = { selectedAttribute = it },
+                )
+            }
+
+            item {
                 SectionTitle("Показатели", trailing = "Нажмите для формулы")
                 Spacer(Modifier.height(8.dp))
-                KeyStats(character = character, onStatClick = { selectedStat = it })
+                KeyStats(
+                    character = character,
+                    onStatClick = { selectedStat = it },
+                    onFortitudeRoll = { showFortitudeRoll = true },
+                )
             }
 
             item {
@@ -307,15 +331,6 @@ fun OverviewScreen(controller: CharacterController) {
                     favoriteSkills = favoriteSkills,
                     onConfigure = { showFavoritePicker = true },
                     onSkillClick = { selectedSkillId = it.id },
-                )
-            }
-
-            item {
-                SectionTitle("Характеристики", trailing = "Нажмите, чтобы изменить")
-                Spacer(Modifier.height(8.dp))
-                AttributeGrid(
-                    character = character,
-                    onAttributeClick = { selectedAttribute = it },
                 )
             }
         }
@@ -466,6 +481,17 @@ fun OverviewScreen(controller: CharacterController) {
         } ?: run { selectedSkillId = null }
     }
 
+    if (showFortitudeRoll) {
+        CheckRollSheet(
+            title = "Проверка Стойкости",
+            bonusTitle = "Стойкость",
+            checkBonus = character.fortitude,
+            formulaText = "2d6 + Стойкость · Стойкость = Телосложение + Воля = ${character.constitution} + ${character.will}",
+            rememberKey = "fortitude-${character.id}",
+            onDismiss = { showFortitudeRoll = false },
+        )
+    }
+
     if (showResourceVisibility) {
         ResourceVisibilitySheet(
             character = character,
@@ -571,6 +597,10 @@ fun OverviewScreen(controller: CharacterController) {
         StatInfoSheet(
             info = statInfo(statId, character),
             character = character,
+            onRollFortitude = {
+                selectedStat = null
+                showFortitudeRoll = true
+            },
             onSetSize = { size ->
                 val previous = character.size
                 val next = size.coerceIn(1, 10)
@@ -1176,6 +1206,7 @@ private fun RecentChangeBar(
 private fun KeyStats(
     character: DublCharacter,
     onStatClick: (StatId) -> Unit,
+    onFortitudeRoll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         StatId.entries.chunked(3).forEach { rowStats ->
@@ -1191,6 +1222,7 @@ private fun KeyStats(
                         accent = statAccent(stat),
                         modifier = Modifier.weight(1f),
                         onClick = { onStatClick(stat) },
+                        onQuickRoll = if (stat == StatId.FORTITUDE) onFortitudeRoll else null,
                     )
                 }
             }
@@ -1214,6 +1246,7 @@ private fun StatTile(
     accent: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onQuickRoll: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier
@@ -1227,13 +1260,36 @@ private fun StatTile(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
-                text = stat.glyph,
-                fontSize = 17.sp,
-                lineHeight = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = accent,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text(
+                    text = stat.glyph,
+                    fontSize = 17.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                )
+                if (onQuickRoll != null) {
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onQuickRoll),
+                        shape = RoundedCornerShape(6.dp),
+                        color = accent.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
+                    ) {
+                        Text(
+                            text = "⚄",
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = accent,
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(3.dp))
             Text(
                 text = value,
@@ -1375,11 +1431,8 @@ private fun FavoriteSkillsSection(
                 )
             }
         } else {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(end = 4.dp),
-            ) {
-                items(favoriteSkills, key = { it.id }) { skill ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                favoriteSkills.forEach { skill ->
                     FavoriteSkillTile(
                         character = character,
                         skill = skill,
@@ -1406,7 +1459,7 @@ private fun FavoriteSkillTile(
     val calculation = character.skillCalculation(skill)
     Surface(
         modifier = Modifier
-            .width(170.dp)
+            .fillMaxWidth()
             .clip(RoundedCornerShape(11.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(11.dp),
@@ -1808,7 +1861,6 @@ private fun FavoriteSkillPickerRow(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SkillRollSheet(
     character: DublCharacter,
@@ -1816,11 +1868,30 @@ private fun SkillRollSheet(
     onDismiss: () -> Unit,
 ) {
     val calculation = character.skillCalculation(skill)
-    val skillBonus = calculation.total
-    var advantageCount by remember(skill.id) { mutableStateOf(0) }
-    var hindranceCount by remember(skill.id) { mutableStateOf(0) }
-    var situationalText by remember(skill.id) { mutableStateOf("0") }
-    var result by remember(skill.id) { mutableStateOf<RollResult?>(null) }
+    CheckRollSheet(
+        title = skill.name,
+        bonusTitle = "Бонус умения",
+        checkBonus = calculation.total,
+        formulaText = calculation.formulaText(skill),
+        rememberKey = skill.id,
+        onDismiss = onDismiss,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CheckRollSheet(
+    title: String,
+    bonusTitle: String,
+    checkBonus: Int?,
+    formulaText: String,
+    rememberKey: Any,
+    onDismiss: () -> Unit,
+) {
+    var advantageCount by remember(rememberKey) { mutableStateOf(0) }
+    var hindranceCount by remember(rememberKey) { mutableStateOf(0) }
+    var situationalText by remember(rememberKey) { mutableStateOf("0") }
+    var result by remember(rememberKey) { mutableStateOf<RollResult?>(null) }
 
     val situationalBonus = situationalText.toIntOrNull()?.coerceIn(-99, 99) ?: 0
     val mode = when {
@@ -1847,21 +1918,21 @@ private fun SkillRollSheet(
                 .fillMaxWidth()
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
-            Text(skill.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                text = skillBonus?.let { "Бонус умения: ${signed(it)}" } ?: "Проверка недоступна",
+                text = checkBonus?.let { "$bonusTitle: ${signed(it)}" } ?: "Проверка недоступна",
                 style = MaterialTheme.typography.titleMedium,
-                color = if (skillBonus != null) DublGold else DublAccent,
+                color = if (checkBonus != null) DublGold else DublAccent,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                calculation.formulaText(skill),
+                formulaText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            if (skillBonus != null) {
+            if (checkBonus != null) {
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "Условия броска",
@@ -1939,7 +2010,7 @@ private fun SkillRollSheet(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
                 ) {
                     Text(
-                        text = rollSetupText(mode, effectCount, skillBonus, situationalBonus),
+                        text = rollSetupText(mode, effectCount, bonusTitle, checkBonus, situationalBonus),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1949,10 +2020,11 @@ private fun SkillRollSheet(
                 Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = {
-                        result = rollSkill(
+                        result = rollCheck(
                             mode = mode,
                             effectCount = effectCount,
-                            skillBonus = skillBonus,
+                            checkBonus = checkBonus,
+                            checkBonusLabel = bonusTitle,
                             situationalBonus = situationalBonus,
                         )
                     },
@@ -1989,11 +2061,7 @@ private fun SkillRollSheet(
                         )
                         Spacer(Modifier.height(5.dp))
                         Text(
-                            text = when (roll.mode) {
-                                RollMode.NORMAL -> "Обычный бросок · 2d6"
-                                RollMode.ADVANTAGE -> "Преимущества ×${roll.effectCount} · ${roll.dice.size}d6 · выбрать 2 наибольших"
-                                RollMode.HINDRANCE -> "Помехи ×${roll.effectCount} · ${roll.dice.size}d6 · выбрать 2 наименьших"
-                            },
+                            text = rollModeDescription(roll),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
@@ -2007,6 +2075,16 @@ private fun SkillRollSheet(
                             itemsIndexed(roll.dice) { index, die ->
                                 DiceChip(value = die, selected = index in roll.chosenIndices)
                             }
+                        }
+                        roll.followUpDie?.let { die ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = followUpDieLabel(roll, die),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = DublGold,
+                                textAlign = TextAlign.Center,
+                            )
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -2024,6 +2102,15 @@ private fun SkillRollSheet(
                                 color = DublAccent,
                                 textAlign = TextAlign.Center,
                             )
+                        }
+                        roll.followUp?.let { followUp ->
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = { result = rollFollowUp(roll) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(followUp.buttonTitle)
+                            }
                         }
                     }
                 }
@@ -2096,19 +2183,16 @@ private fun DiceChip(value: Int, selected: Boolean) {
     }
 }
 
-private fun rollSkill(
+private fun rollCheck(
     mode: RollMode,
     effectCount: Int,
-    skillBonus: Int,
+    checkBonus: Int,
+    checkBonusLabel: String,
     situationalBonus: Int,
 ): RollResult {
     val extraDice = effectCount.coerceAtLeast(0)
     val dice = List(2 + extraDice) { Random.nextInt(1, 7) }
-    val chosenIndices = when (mode) {
-        RollMode.NORMAL -> setOf(0, 1)
-        RollMode.ADVANTAGE -> dice.indices.sortedByDescending { dice[it] }.take(2).toSet()
-        RollMode.HINDRANCE -> dice.indices.sortedBy { dice[it] }.take(2).toSet()
-    }
+    val chosenIndices = chooseDiceIndices(mode, dice)
     val chosenValues = chosenIndices.map { dice[it] }
     val pair = chosenValues.sorted()
     val hasExtraDice = dice.size > 2
@@ -2117,28 +2201,89 @@ private fun rollSkill(
     } else {
         ""
     }
-    val note = when {
-        pair == listOf(1, 1) -> "Выбран дубль единиц — критический провал.$ambiguitySuffix"
-        pair == listOf(6, 6) -> "Выбран дубль шестёрок — критический успех и кость превосходства.$ambiguitySuffix"
-        pair.size == 2 && pair[0] == pair[1] -> "Выбран дубль — по правилам даёт дополнительную кость преимущества.$ambiguitySuffix"
-        else -> null
+    val (followUp, note) = when {
+        pair == listOf(1, 1) -> RollFollowUp.CRITICAL_FAILURE_CONFIRMATION to
+            "Критический провал. Бросьте дополнительную кость: ещё одна 1 подтверждает критический провал.$ambiguitySuffix"
+        pair == listOf(6, 6) -> RollFollowUp.SUPERIORITY_DIE to
+            "Критический успех. Доступна кость превосходства; её результат прибавляется к проверке.$ambiguitySuffix"
+        pair.size == 2 && pair[0] == pair[1] -> RollFollowUp.ADVANTAGE_DIE to
+            "Дубль ${pair[0]}–${pair[1]}. По правилам доступна дополнительная кость преимущества.$ambiguitySuffix"
+        else -> null to null
     }
     return RollResult(
         mode = mode,
         effectCount = extraDice,
         dice = dice,
         chosenIndices = chosenIndices,
-        skillBonus = skillBonus,
+        checkBonus = checkBonus,
+        checkBonusLabel = checkBonusLabel,
         situationalBonus = situationalBonus,
-        total = chosenValues.sum() + skillBonus + situationalBonus,
+        total = chosenValues.sum() + checkBonus + situationalBonus,
         note = note,
+        followUp = followUp,
     )
+}
+
+private fun rollFollowUp(roll: RollResult): RollResult {
+    val action = roll.followUp ?: return roll
+    val die = Random.nextInt(1, 7)
+    return when (action) {
+        RollFollowUp.ADVANTAGE_DIE -> {
+            val newDice = roll.dice + die
+            val newChosen = chooseDiceIndices(
+                mode = roll.mode,
+                dice = newDice,
+                grantedAdvantageForNormal = roll.mode == RollMode.NORMAL,
+            )
+            val newTotal = newChosen.sumOf { newDice[it] } + roll.checkBonus + roll.situationalBonus
+            roll.copy(
+                dice = newDice,
+                chosenIndices = newChosen,
+                total = newTotal,
+                note = "Кость преимущества за дубль: $die. Результат пересчитан по правилам текущего броска.",
+                followUp = null,
+                followUpDie = die,
+                grantedAdvantageDie = true,
+            )
+        }
+        RollFollowUp.CRITICAL_FAILURE_CONFIRMATION -> roll.copy(
+            note = if (die == 1) {
+                "Выпала ещё одна 1 — подтверждённый критический провал."
+            } else {
+                "Критический провал не подтверждён: дополнительная кость показала $die."
+            },
+            followUp = null,
+            followUpDie = die,
+        )
+        RollFollowUp.SUPERIORITY_DIE -> roll.copy(
+            total = roll.total + die,
+            note = if (die == 6) {
+                "Кость превосходства: 6 — подтверждённый критический успех."
+            } else {
+                "Кость превосходства: $die добавлена к результату критического успеха."
+            },
+            followUp = null,
+            followUpDie = die,
+        )
+    }
+}
+
+private fun chooseDiceIndices(
+    mode: RollMode,
+    dice: List<Int>,
+    grantedAdvantageForNormal: Boolean = false,
+): Set<Int> = when {
+    mode == RollMode.HINDRANCE -> dice.indices.sortedBy { dice[it] }.take(2).toSet()
+    mode == RollMode.ADVANTAGE || grantedAdvantageForNormal ->
+        dice.indices.sortedByDescending { dice[it] }.take(2).toSet()
+    else -> setOf(0, 1)
 }
 
 private fun rollSetupText(
     mode: RollMode,
     effectCount: Int,
-    skillBonus: Int,
+    bonusTitle: String,
+    checkBonus: Int,
     situationalBonus: Int,
 ): String {
     val diceText = when (mode) {
@@ -2148,19 +2293,38 @@ private fun rollSetupText(
     }
     return buildString {
         append(diceText)
-        append(" · умение ").append(signed(skillBonus))
+        append(" · ").append(bonusTitle.lowercase()).append(" ").append(signed(checkBonus))
         if (situationalBonus != 0) {
             append(" · ситуация ").append(signed(situationalBonus))
         }
     }
 }
 
+private fun rollModeDescription(roll: RollResult): String = buildString {
+    when (roll.mode) {
+        RollMode.NORMAL -> append("Обычный бросок · 2d6")
+        RollMode.ADVANTAGE -> append("Преимущества ×${roll.effectCount} · ${2 + roll.effectCount}d6 · выбрать 2 наибольших")
+        RollMode.HINDRANCE -> append("Помехи ×${roll.effectCount} · ${2 + roll.effectCount}d6 · выбрать 2 наименьших")
+    }
+    if (roll.grantedAdvantageDie) append(" · +1 кость за дубль")
+}
+
+private fun followUpDieLabel(roll: RollResult, die: Int): String = when {
+    roll.grantedAdvantageDie -> "Дополнительная кость за дубль: $die"
+    roll.note?.contains("превосходства", ignoreCase = true) == true -> "Кость превосходства: $die"
+    roll.note?.contains("критический провал", ignoreCase = true) == true -> "Кость подтверждения: $die"
+    else -> "Дополнительная кость: $die"
+}
+
 private fun buildRollBreakdown(roll: RollResult): String = buildString {
     append("Кости ")
     append(roll.chosenIndices.sorted().joinToString(" + ") { roll.dice[it].toString() })
-    append(" · умение ").append(signed(roll.skillBonus))
+    append(" · ").append(roll.checkBonusLabel.lowercase()).append(" ").append(signed(roll.checkBonus))
     if (roll.situationalBonus != 0) {
         append(" · ситуация ").append(signed(roll.situationalBonus))
+    }
+    if (roll.followUpDie != null && roll.note?.contains("превосходства", ignoreCase = true) == true) {
+        append(" · превосходство +").append(roll.followUpDie)
     }
 }
 
@@ -2256,6 +2420,7 @@ private fun ResourceVisibilityRow(
 private fun StatInfoSheet(
     info: StatInfo,
     character: DublCharacter,
+    onRollFortitude: () -> Unit,
     onSetSize: (Int) -> Unit,
     onSetLegs: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -2309,6 +2474,16 @@ private fun StatInfoSheet(
             info.note?.let {
                 Spacer(Modifier.height(10.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            if (info.id == StatId.FORTITUDE) {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onRollFortitude,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("⚄  Бросить Стойкость")
+                }
             }
 
             if (info.id == StatId.SIZE) {
