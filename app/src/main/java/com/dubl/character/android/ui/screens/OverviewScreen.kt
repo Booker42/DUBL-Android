@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -71,8 +73,12 @@ import androidx.compose.ui.zIndex
 import com.dubl.character.android.data.CharacterSheetExtrasRepository
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterConditionId
+import com.dubl.character.android.model.CharacterSheetResourceId
 import com.dubl.character.android.model.DublCharacter
-import com.dubl.character.android.model.QuickCheckId
+import com.dubl.character.android.model.ResolvedSkill
+import com.dubl.character.android.model.resolveSkill
+import com.dubl.character.android.model.resolvedSkills
+import com.dubl.character.android.model.skillCalculation
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.theme.DublAccent
@@ -83,20 +89,66 @@ import com.dubl.character.android.ui.theme.DublMana
 import com.dubl.character.android.ui.theme.DublStamina
 import java.text.DecimalFormat
 import kotlin.math.abs
+import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-enum class CharacterResource {
-    HEALTH,
-    ENDURANCE,
-    MANA,
+private enum class CharacterResource(val persisted: CharacterSheetResourceId) {
+    HEALTH(CharacterSheetResourceId.HEALTH),
+    ENDURANCE(CharacterSheetResourceId.ENDURANCE),
+    MANA(CharacterSheetResourceId.MANA),
+}
+
+private enum class StatId(val title: String, val glyph: String) {
+    DEFENSE("Защита", "◆"),
+    REFLEXES("Рефлексы", "↯"),
+    INITIATIVE("Инициатива", "◷"),
+    FORTITUDE("Стойкость", "⬢"),
+    RUN("Бег", "»"),
+    SIZE("Размер", "◇"),
+}
+
+private enum class RollMode(val title: String) {
+    NORMAL("Обычный"),
+    ADVANTAGE("Преимущество"),
+    HINDRANCE("Помеха"),
+}
+
+private sealed interface UndoAction {
+    data class Resource(val resource: CharacterResource, val appliedDelta: Int) : UndoAction
+    data class Attribute(val id: AttributeId, val appliedDelta: Int) : UndoAction
+    data class Conditions(val previous: Set<CharacterConditionId>) : UndoAction
+    data class Name(val previous: String) : UndoAction
+    data class Experience(val previous: Int) : UndoAction
+    data class Size(val previous: Int) : UndoAction
+    data class Legs(val previous: Int) : UndoAction
 }
 
 private data class RecentChange(
     val text: String,
     val accent: Color,
+    val undo: UndoAction? = null,
     val token: Long = System.nanoTime(),
+)
+
+private data class RollResult(
+    val mode: RollMode,
+    val effectCount: Int,
+    val dice: List<Int>,
+    val chosenIndices: Set<Int>,
+    val skillBonus: Int,
+    val situationalBonus: Int,
+    val total: Int,
+    val note: String? = null,
+)
+
+private data class StatInfo(
+    val id: StatId,
+    val value: String,
+    val formula: String,
+    val breakdown: List<String>,
+    val note: String? = null,
 )
 
 @Composable
@@ -116,12 +168,43 @@ fun OverviewScreen(controller: CharacterController) {
         }
     }
 
-    var showProfileEdit by remember { mutableStateOf(false) }
+    var showAdvancedEdit by remember { mutableStateOf(false) }
     var showConditions by remember { mutableStateOf(false) }
+    var selectedCondition by remember { mutableStateOf<CharacterConditionId?>(null) }
     var showFavoritePicker by remember { mutableStateOf(false) }
+    var selectedSkillId by remember { mutableStateOf<String?>(null) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
     var selectedAttribute by remember { mutableStateOf<AttributeId?>(null) }
+    var selectedStat by remember { mutableStateOf<StatId?>(null) }
+    var showResourceVisibility by remember { mutableStateOf(false) }
+    var showNameEdit by remember { mutableStateOf(false) }
+    var showExperienceEdit by remember { mutableStateOf(false) }
     var recentChange by remember(character.id) { mutableStateOf<RecentChange?>(null) }
+
+    fun saveExtras(updated: com.dubl.character.android.model.CharacterSheetExtras) {
+        sheetExtras = updated
+        extrasRepository.save(character.id, updated)
+    }
+
+    fun recordRecent(change: RecentChange) {
+        recentChange = change
+    }
+
+    fun toggleCondition(condition: CharacterConditionId) {
+        val previous = sheetExtras.activeConditions
+        val next = previous.toMutableSet().apply {
+            if (!add(condition)) remove(condition)
+        }.toSet()
+        saveExtras(sheetExtras.copy(activeConditions = next))
+        val enabled = condition in next
+        recordRecent(
+            RecentChange(
+                text = if (enabled) "Добавлено состояние: ${condition.title}" else "Убрано состояние: ${condition.title}",
+                accent = DublAccent,
+                undo = UndoAction.Conditions(previous),
+            ),
+        )
+    }
 
     val portraitPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -131,23 +214,15 @@ fun OverviewScreen(controller: CharacterController) {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
-            val updated = sheetExtras.copy(portraitUri = uri.toString())
-            sheetExtras = updated
-            extrasRepository.save(character.id, updated)
+            saveExtras(sheetExtras.copy(portraitUri = uri.toString()))
         }
     }
 
     LaunchedEffect(recentChange?.token) {
         if (recentChange != null) {
-            delay(3200)
+            delay(6000)
             recentChange = null
         }
-    }
-
-    fun recordResourceChange(label: String, delta: Int, accent: Color) {
-        if (delta == 0) return
-        val sign = if (delta > 0) "+" else "−"
-        recentChange = RecentChange("$sign${abs(delta)} $label", accent)
     }
 
     val effectiveConditions = remember(sheetExtras.activeConditions, character.enduranceCurrent) {
@@ -155,6 +230,25 @@ fun OverviewScreen(controller: CharacterController) {
             addAll(sheetExtras.activeConditions)
             if (character.enduranceCurrent == 0) add(CharacterConditionId.WEAKNESS)
         }
+    }
+    val favoriteSkills = sheetExtras.favoriteSkillIds.mapNotNull { character.resolveSkill(it) }
+
+    fun undoLast() {
+        when (val action = recentChange?.undo) {
+            is UndoAction.Resource -> when (action.resource) {
+                CharacterResource.HEALTH -> controller.changeHp(-action.appliedDelta)
+                CharacterResource.ENDURANCE -> controller.changeEndurance(-action.appliedDelta)
+                CharacterResource.MANA -> controller.changeMana(-action.appliedDelta)
+            }
+            is UndoAction.Attribute -> controller.changeAttribute(action.id, -action.appliedDelta)
+            is UndoAction.Conditions -> saveExtras(sheetExtras.copy(activeConditions = action.previous))
+            is UndoAction.Name -> controller.updateActive { it.copy(name = action.previous) }
+            is UndoAction.Experience -> controller.updateActive { it.copy(experience = action.previous) }
+            is UndoAction.Size -> controller.updateActive { it.copy(size = action.previous) }
+            is UndoAction.Legs -> controller.updateActive { it.copy(legs = action.previous) }
+            null -> Unit
+        }
+        recentChange = null
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -168,41 +262,51 @@ fun OverviewScreen(controller: CharacterController) {
                 CharacterHero(
                     character = character,
                     portraitUri = sheetExtras.portraitUri,
-                    onEdit = { showProfileEdit = true },
+                    onAdvancedEdit = { showAdvancedEdit = true },
                     onPortraitClick = { portraitPicker.launch(arrayOf("image/*")) },
+                    onNameClick = { showNameEdit = true },
+                    onExperienceClick = { showExperienceEdit = true },
                 )
             }
 
             item {
-                SectionTitle("Ресурсы")
+                SectionTitle(
+                    title = "Ресурсы",
+                    trailing = "Настроить",
+                    onTrailingClick = { showResourceVisibility = true },
+                )
                 Spacer(Modifier.height(8.dp))
                 ResourceStrip(
                     character = character,
+                    hiddenResources = sheetExtras.hiddenResourceIds,
                     onResourceClick = { selectedResource = it },
+                    onConfigure = { showResourceVisibility = true },
                 )
                 Spacer(Modifier.height(8.dp))
-                ConditionSummaryBar(
+                ConditionStrip(
                     conditions = effectiveConditions,
                     autoWeakness = character.enduranceCurrent == 0,
-                    onClick = { showConditions = true },
+                    onManage = { showConditions = true },
+                    onConditionClick = { selectedCondition = it },
                 )
                 recentChange?.let {
                     Spacer(Modifier.height(8.dp))
-                    RecentChangeBar(it)
+                    RecentChangeBar(change = it, onUndo = if (it.undo != null) ::undoLast else null)
                 }
             }
 
             item {
-                SectionTitle("Показатели")
+                SectionTitle("Показатели", trailing = "Нажмите для формулы")
                 Spacer(Modifier.height(8.dp))
-                KeyStats(character)
+                KeyStats(character = character, onStatClick = { selectedStat = it })
             }
 
             item {
-                QuickChecksSection(
+                FavoriteSkillsSection(
                     character = character,
-                    favoriteChecks = sheetExtras.favoriteChecks,
+                    favoriteSkills = favoriteSkills,
                     onConfigure = { showFavoritePicker = true },
+                    onSkillClick = { selectedSkillId = it.id },
                 )
             }
 
@@ -221,6 +325,7 @@ fun OverviewScreen(controller: CharacterController) {
                 character = character,
                 portraitUri = sheetExtras.portraitUri,
                 conditionCount = effectiveConditions.size,
+                hiddenResources = sheetExtras.hiddenResourceIds,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(horizontal = 12.dp, vertical = 7.dp)
@@ -230,10 +335,10 @@ fun OverviewScreen(controller: CharacterController) {
         }
     }
 
-    if (showProfileEdit) {
+    if (showAdvancedEdit) {
         EditCharacterDialog(
             character = character,
-            onDismiss = { showProfileEdit = false },
+            onDismiss = { showAdvancedEdit = false },
             onConfirm = { name, concept, experience, size, legs, manaEnabled, manaMaximum ->
                 controller.updateActive {
                     it.copy(
@@ -246,8 +351,56 @@ fun OverviewScreen(controller: CharacterController) {
                         manaMaximum = manaMaximum,
                     )
                 }
-                showProfileEdit = false
+                showAdvancedEdit = false
             },
+        )
+    }
+
+    if (showNameEdit) {
+        TextValueEditSheet(
+            title = "Имя персонажа",
+            initialValue = character.name,
+            numeric = false,
+            onSave = { value ->
+                val previous = character.name
+                val next = value.ifBlank { "Новый персонаж" }
+                controller.updateActive { it.copy(name = next) }
+                if (next != previous) {
+                    recordRecent(
+                        RecentChange(
+                            text = "Имя изменено",
+                            accent = DublGold,
+                            undo = UndoAction.Name(previous),
+                        ),
+                    )
+                }
+                showNameEdit = false
+            },
+            onDismiss = { showNameEdit = false },
+        )
+    }
+
+    if (showExperienceEdit) {
+        TextValueEditSheet(
+            title = "Опыт",
+            initialValue = character.experience.toString(),
+            numeric = true,
+            onSave = { value ->
+                val previous = character.experience
+                val next = value.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                controller.updateActive { it.copy(experience = next) }
+                if (next != previous) {
+                    recordRecent(
+                        RecentChange(
+                            text = "Опыт: $previous → $next",
+                            accent = DublGold,
+                            undo = UndoAction.Experience(previous),
+                        ),
+                    )
+                }
+                showExperienceEdit = false
+            },
+            onDismiss = { showExperienceEdit = false },
         )
     }
 
@@ -255,85 +408,144 @@ fun OverviewScreen(controller: CharacterController) {
         ConditionPickerSheet(
             active = sheetExtras.activeConditions,
             autoWeakness = character.enduranceCurrent == 0,
-            onToggle = { condition ->
-                val next = sheetExtras.activeConditions.toMutableSet().apply {
-                    if (!add(condition)) remove(condition)
-                }
-                val updated = sheetExtras.copy(activeConditions = next)
-                sheetExtras = updated
-                extrasRepository.save(character.id, updated)
+            onToggle = ::toggleCondition,
+            onInfo = { condition ->
+                showConditions = false
+                selectedCondition = condition
             },
             onDismiss = { showConditions = false },
         )
     }
 
+    selectedCondition?.let { condition ->
+        val automatic = condition == CharacterConditionId.WEAKNESS && character.enduranceCurrent == 0
+        ConditionDetailSheet(
+            condition = condition,
+            active = condition in effectiveConditions,
+            automatic = automatic,
+            onToggle = {
+                if (!automatic) toggleCondition(condition)
+                selectedCondition = null
+            },
+            onDismiss = { selectedCondition = null },
+        )
+    }
+
     if (showFavoritePicker) {
-        FavoriteChecksSheet(
-            selected = sheetExtras.favoriteChecks,
-            onToggle = { check ->
-                val current = sheetExtras.favoriteChecks
-                val next = if (check in current) {
-                    current - check
-                } else if (current.size < 4) {
-                    current + check
-                } else {
-                    current
-                }
-                if (next != current) {
-                    val updated = sheetExtras.copy(favoriteChecks = next)
-                    sheetExtras = updated
-                    extrasRepository.save(character.id, updated)
+        FavoriteSkillsSheet(
+            character = character,
+            selectedIds = sheetExtras.favoriteSkillIds,
+            onToggle = { skillId ->
+                val current = sheetExtras.favoriteSkillIds
+                val next = if (skillId in current) current - skillId else current + skillId
+                saveExtras(sheetExtras.copy(favoriteSkillIds = next))
+            },
+            onMove = { skillId, delta ->
+                val current = sheetExtras.favoriteSkillIds.toMutableList()
+                val from = current.indexOf(skillId)
+                if (from >= 0) {
+                    val to = (from + delta).coerceIn(0, current.lastIndex)
+                    if (to != from) {
+                        val item = current.removeAt(from)
+                        current.add(to, item)
+                        saveExtras(sheetExtras.copy(favoriteSkillIds = current))
+                    }
                 }
             },
             onDismiss = { showFavoritePicker = false },
         )
     }
 
+    selectedSkillId?.let { skillId ->
+        character.resolveSkill(skillId)?.let { skill ->
+            SkillRollSheet(
+                character = character,
+                skill = skill,
+                onDismiss = { selectedSkillId = null },
+            )
+        } ?: run { selectedSkillId = null }
+    }
+
+    if (showResourceVisibility) {
+        ResourceVisibilitySheet(
+            character = character,
+            hidden = sheetExtras.hiddenResourceIds,
+            onToggle = { resourceId ->
+                val next = sheetExtras.hiddenResourceIds.toMutableSet().apply {
+                    if (!add(resourceId)) remove(resourceId)
+                }.toSet()
+                saveExtras(sheetExtras.copy(hiddenResourceIds = next))
+            },
+            onDismiss = { showResourceVisibility = false },
+        )
+    }
+
     selectedResource?.let { resource ->
         when (resource) {
-            CharacterResource.HEALTH -> {
-                HealthControlSheet(
-                    current = character.hpCurrent,
-                    maximum = character.healthMaximum,
-                    onChange = { requestedDelta ->
-                        val before = character.hpCurrent
-                        val after = (before + requestedDelta).coerceIn(0, character.healthMaximum)
-                        controller.changeHp(requestedDelta)
-                        recordResourceChange("здоровья", after - before, DublHealth)
-                    },
-                    onDismiss = { selectedResource = null },
-                )
-            }
-            CharacterResource.ENDURANCE -> {
-                ResourceAdjustSheet(
-                    title = "Выносливость",
-                    current = character.enduranceCurrent,
-                    maximum = 3,
-                    accent = DublStamina,
-                    onChange = { requestedDelta ->
-                        val before = character.enduranceCurrent
-                        val after = (before + requestedDelta).coerceIn(0, 3)
-                        controller.changeEndurance(requestedDelta)
-                        recordResourceChange("выносливости", after - before, DublStamina)
-                    },
-                    onDismiss = { selectedResource = null },
-                )
-            }
-            CharacterResource.MANA -> {
-                ResourceAdjustSheet(
-                    title = "Мана",
-                    current = character.manaCurrent,
-                    maximum = character.manaMaximum,
-                    accent = DublMana,
-                    onChange = { requestedDelta ->
-                        val before = character.manaCurrent
-                        val after = (before + requestedDelta).coerceIn(0, character.manaMaximum)
-                        controller.changeMana(requestedDelta)
-                        recordResourceChange("маны", after - before, DublMana)
-                    },
-                    onDismiss = { selectedResource = null },
-                )
-            }
+            CharacterResource.HEALTH -> HealthControlSheet(
+                current = character.hpCurrent,
+                maximum = character.healthMaximum,
+                onChange = { requestedDelta ->
+                    val before = character.hpCurrent
+                    val after = (before + requestedDelta).coerceIn(0, character.healthMaximum)
+                    val applied = after - before
+                    if (applied != 0) {
+                        controller.changeHp(applied)
+                        recordRecent(
+                            RecentChange(
+                                text = resourceChangeText("здоровья", applied),
+                                accent = DublHealth,
+                                undo = UndoAction.Resource(CharacterResource.HEALTH, applied),
+                            ),
+                        )
+                    }
+                },
+                onDismiss = { selectedResource = null },
+            )
+            CharacterResource.ENDURANCE -> ResourceAdjustSheet(
+                title = "Выносливость",
+                current = character.enduranceCurrent,
+                maximum = 3,
+                accent = DublStamina,
+                onChange = { requestedDelta ->
+                    val before = character.enduranceCurrent
+                    val after = (before + requestedDelta).coerceIn(0, 3)
+                    val applied = after - before
+                    if (applied != 0) {
+                        controller.changeEndurance(applied)
+                        recordRecent(
+                            RecentChange(
+                                text = resourceChangeText("выносливости", applied),
+                                accent = DublStamina,
+                                undo = UndoAction.Resource(CharacterResource.ENDURANCE, applied),
+                            ),
+                        )
+                    }
+                },
+                onDismiss = { selectedResource = null },
+            )
+            CharacterResource.MANA -> ResourceAdjustSheet(
+                title = "Мана",
+                current = character.manaCurrent,
+                maximum = character.manaMaximum,
+                accent = DublMana,
+                onChange = { requestedDelta ->
+                    val before = character.manaCurrent
+                    val after = (before + requestedDelta).coerceIn(0, character.manaMaximum)
+                    val applied = after - before
+                    if (applied != 0) {
+                        controller.changeMana(applied)
+                        recordRecent(
+                            RecentChange(
+                                text = resourceChangeText("маны", applied),
+                                accent = DublMana,
+                                undo = UndoAction.Resource(CharacterResource.MANA, applied),
+                            ),
+                        )
+                    }
+                },
+                onDismiss = { selectedResource = null },
+            )
         }
     }
 
@@ -341,15 +553,53 @@ fun OverviewScreen(controller: CharacterController) {
         AttributeAdjustSheet(
             id = id,
             character = character,
-            onMinus = {
-                controller.changeAttribute(id, -1)
-                recentChange = RecentChange("${id.title} −1", attributeAccent(id))
-            },
-            onPlus = {
-                controller.changeAttribute(id, 1)
-                recentChange = RecentChange("${id.title} +1", attributeAccent(id))
+            onChange = { delta ->
+                controller.changeAttribute(id, delta)
+                recordRecent(
+                    RecentChange(
+                        text = "${id.title} ${signed(delta)}",
+                        accent = attributeAccent(id),
+                        undo = UndoAction.Attribute(id, delta),
+                    ),
+                )
             },
             onDismiss = { selectedAttribute = null },
+        )
+    }
+
+    selectedStat?.let { statId ->
+        StatInfoSheet(
+            info = statInfo(statId, character),
+            character = character,
+            onSetSize = { size ->
+                val previous = character.size
+                val next = size.coerceIn(1, 10)
+                controller.updateActive { it.copy(size = next) }
+                if (next != previous) {
+                    recordRecent(
+                        RecentChange(
+                            text = "Размер: $previous → $next",
+                            accent = statAccent(StatId.SIZE),
+                            undo = UndoAction.Size(previous),
+                        ),
+                    )
+                }
+            },
+            onSetLegs = { legs ->
+                val previous = character.legs
+                val next = legs.coerceAtLeast(2)
+                controller.updateActive { it.copy(legs = next) }
+                if (next != previous) {
+                    recordRecent(
+                        RecentChange(
+                            text = "Количество ног: $previous → $next",
+                            accent = statAccent(StatId.RUN),
+                            undo = UndoAction.Legs(previous),
+                        ),
+                    )
+                }
+            },
+            onDismiss = { selectedStat = null },
         )
     }
 }
@@ -358,8 +608,10 @@ fun OverviewScreen(controller: CharacterController) {
 private fun CharacterHero(
     character: DublCharacter,
     portraitUri: String?,
-    onEdit: () -> Unit,
+    onAdvancedEdit: () -> Unit,
     onPortraitClick: () -> Unit,
+    onNameClick: () -> Unit,
+    onExperienceClick: () -> Unit,
 ) {
     DublCard(
         modifier = Modifier.fillMaxWidth(),
@@ -385,13 +637,17 @@ private fun CharacterHero(
                 ) {
                     Text(
                         text = character.name,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(7.dp))
+                            .clickable(onClick = onNameClick)
+                            .padding(vertical = 3.dp),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
                     )
-                    TextButton(onClick = onEdit) {
-                        Text("Изменить")
+                    TextButton(onClick = onAdvancedEdit) {
+                        Text("Ещё")
                     }
                 }
 
@@ -404,6 +660,7 @@ private fun CharacterHero(
                         label = "Опыт",
                         value = character.experience.toString(),
                         modifier = Modifier.weight(1f),
+                        onClick = onExperienceClick,
                     )
                     MetaPill(
                         label = "Очки способностей",
@@ -497,6 +754,7 @@ private fun CompactHeroBar(
     character: DublCharacter,
     portraitUri: String?,
     conditionCount: Int,
+    hiddenResources: Set<CharacterSheetResourceId>,
     modifier: Modifier = Modifier,
     onHealthClick: () -> Unit,
 ) {
@@ -520,27 +778,33 @@ private fun CompactHeroBar(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
             )
-            Surface(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(9.dp))
-                    .clickable(onClick = onHealthClick),
-                shape = RoundedCornerShape(9.dp),
-                color = DublHealth.copy(alpha = 0.09f),
-                border = BorderStroke(1.dp, DublHealth.copy(alpha = 0.42f)),
-            ) {
+            if (CharacterSheetResourceId.HEALTH !in hiddenResources) {
+                val critical = healthCriticalLevel(character.hpCurrent, character.healthMaximum)
+                val healthAccent = if (critical > 0) Color(0xFFD7656E) else DublHealth
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .clickable(onClick = onHealthClick),
+                    shape = RoundedCornerShape(9.dp),
+                    color = healthAccent.copy(alpha = if (critical > 0) 0.15f else 0.09f),
+                    border = BorderStroke(if (critical > 0) 1.5.dp else 1.dp, healthAccent.copy(alpha = 0.55f)),
+                ) {
+                    Text(
+                        text = "HP ${character.hpCurrent}/${character.healthMaximum}",
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = healthAccent,
+                    )
+                }
+            }
+            if (CharacterSheetResourceId.ENDURANCE !in hiddenResources) {
                 Text(
-                    text = "HP ${character.hpCurrent}/${character.healthMaximum}",
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    text = "Вын ${character.enduranceCurrent}/3",
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = DublHealth,
+                    color = DublStamina,
                 )
             }
-            Text(
-                text = "Вын ${character.enduranceCurrent}/3",
-                style = MaterialTheme.typography.labelLarge,
-                color = DublStamina,
-            )
             if (conditionCount > 0) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -563,9 +827,11 @@ private fun MetaPill(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
+    val clickModifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
     Surface(
-        modifier = modifier,
+        modifier = modifier.then(clickModifier),
         shape = RoundedCornerShape(8.dp),
         color = DublGold.copy(alpha = 0.08f),
         border = BorderStroke(1.dp, DublGold.copy(alpha = 0.46f)),
@@ -635,37 +901,69 @@ private fun SectionTitle(
 @Composable
 private fun ResourceStrip(
     character: DublCharacter,
+    hiddenResources: Set<CharacterSheetResourceId>,
     onResourceClick: (CharacterResource) -> Unit,
+    onConfigure: () -> Unit,
 ) {
+    val resources = buildList {
+        if (CharacterSheetResourceId.HEALTH !in hiddenResources) add(CharacterResource.HEALTH)
+        if (CharacterSheetResourceId.ENDURANCE !in hiddenResources) add(CharacterResource.ENDURANCE)
+        if (character.manaEnabled && CharacterSheetResourceId.MANA !in hiddenResources) add(CharacterResource.MANA)
+    }
+
+    if (resources.isEmpty()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onConfigure),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
+        ) {
+            Text(
+                text = "Все ресурсы скрыты · нажмите, чтобы настроить",
+                modifier = Modifier.padding(14.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CompactResourceCard(
-            title = "Здоровье",
-            current = character.hpCurrent,
-            maximum = character.healthMaximum,
-            accent = DublHealth,
-            modifier = Modifier.weight(1f),
-            onClick = { onResourceClick(CharacterResource.HEALTH) },
-        )
-        CompactResourceCard(
-            title = "Выносливость",
-            current = character.enduranceCurrent,
-            maximum = 3,
-            accent = DublStamina,
-            modifier = Modifier.weight(1f),
-            onClick = { onResourceClick(CharacterResource.ENDURANCE) },
-        )
-        if (character.manaEnabled) {
-            CompactResourceCard(
-                title = "Мана",
-                current = character.manaCurrent,
-                maximum = character.manaMaximum,
-                accent = DublMana,
-                modifier = Modifier.weight(1f),
-                onClick = { onResourceClick(CharacterResource.MANA) },
-            )
+        resources.forEach { resource ->
+            when (resource) {
+                CharacterResource.HEALTH -> CompactResourceCard(
+                    title = "Здоровье",
+                    current = character.hpCurrent,
+                    maximum = character.healthMaximum,
+                    accent = DublHealth,
+                    criticalLevel = healthCriticalLevel(character.hpCurrent, character.healthMaximum),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onResourceClick(resource) },
+                )
+                CharacterResource.ENDURANCE -> CompactResourceCard(
+                    title = "Выносливость",
+                    current = character.enduranceCurrent,
+                    maximum = 3,
+                    accent = DublStamina,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onResourceClick(resource) },
+                )
+                CharacterResource.MANA -> CompactResourceCard(
+                    title = "Мана",
+                    current = character.manaCurrent,
+                    maximum = character.manaMaximum,
+                    accent = DublMana,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onResourceClick(resource) },
+                )
+            }
         }
     }
 }
@@ -677,6 +975,7 @@ private fun CompactResourceCard(
     maximum: Int,
     accent: Color,
     modifier: Modifier = Modifier,
+    criticalLevel: Int = 0,
     onClick: () -> Unit,
 ) {
     val animatedCurrent by animateIntAsState(
@@ -690,29 +989,50 @@ private fun CompactResourceCard(
         animationSpec = tween(durationMillis = 340),
         label = "$title progress",
     )
+    val displayAccent = if (criticalLevel > 0) Color(0xFFD7656E) else accent
+    val borderWidth = when (criticalLevel) {
+        3 -> 2.25.dp
+        2 -> 2.dp
+        1 -> 1.35.dp
+        else -> 1.dp
+    }
 
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        color = accent.copy(alpha = 0.045f),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.34f)),
+        color = displayAccent.copy(alpha = if (criticalLevel > 0) 0.10f else 0.045f),
+        border = BorderStroke(borderWidth, displayAccent.copy(alpha = if (criticalLevel > 0) 0.72f else 0.34f)),
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                if (criticalLevel >= 2) {
+                    Text(
+                        text = if (criticalLevel == 3) "0 HP" else "КРИТ.",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = displayAccent,
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "$animatedCurrent / $maximum",
                 fontSize = 19.sp,
                 lineHeight = 23.sp,
                 fontWeight = FontWeight.Bold,
-                color = accent,
+                color = displayAccent,
             )
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
@@ -721,160 +1041,210 @@ private fun CompactResourceCard(
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp)),
-                color = accent,
-                trackColor = accent.copy(alpha = 0.14f),
+                color = displayAccent,
+                trackColor = displayAccent.copy(alpha = 0.14f),
             )
         }
     }
 }
 
+private fun healthCriticalLevel(current: Int, maximum: Int): Int {
+    if (current <= 0) return 3
+    if (maximum <= 0) return 0
+    val ratio = current.toDouble() / maximum.toDouble()
+    if (ratio <= 0.25) return 2
+    if (ratio <= 0.50) return 1
+    return 0
+}
+
 @Composable
-private fun ConditionSummaryBar(
+private fun ConditionStrip(
     conditions: Set<CharacterConditionId>,
     autoWeakness: Boolean,
-    onClick: () -> Unit,
+    onManage: () -> Unit,
+    onConditionClick: (CharacterConditionId) -> Unit,
 ) {
-    val ordered = CharacterConditionId.entries.filter { it in conditions }
-    val text = when {
-        ordered.isEmpty() -> "Нет активных состояний"
-        ordered.size <= 2 -> ordered.joinToString(" · ") { it.title }
-        else -> ordered.take(2).joinToString(" · ") { it.title } + "  +${ordered.size - 2}"
-    }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = if (ordered.isEmpty()) MaterialTheme.colorScheme.surface else DublAccentSoft.copy(alpha = 0.42f),
-        border = BorderStroke(
-            1.dp,
-            if (ordered.isEmpty()) MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
-            else DublAccent.copy(alpha = 0.42f),
-        ),
-    ) {
+    Column {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 text = "Состояния",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
-                color = if (ordered.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else DublAccent,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            TextButton(onClick = onManage) { Text("Изменить") }
+        }
+        val ordered = CharacterConditionId.entries.filter { it in conditions }
+        if (ordered.isEmpty()) {
             Text(
-                text = text,
-                modifier = Modifier.weight(1f),
+                text = "Нет активных состояний",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (autoWeakness) {
-                Text(
-                    text = "авто",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = DublStamina,
-                )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                ordered.chunked(2).forEach { rowConditions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        rowConditions.forEach { condition ->
+                            val automatic = condition == CharacterConditionId.WEAKNESS && autoWeakness
+                            ConditionChip(
+                                condition = condition,
+                                automatic = automatic,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onConditionClick(condition) },
+                            )
+                        }
+                        if (rowConditions.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
             }
-            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun RecentChangeBar(change: RecentChange) {
+private fun ConditionChip(
+    condition: CharacterConditionId,
+    automatic: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(9.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(9.dp),
+        color = DublAccentSoft.copy(alpha = 0.42f),
+        border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.38f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = condition.title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            if (automatic) {
+                Text("авто", style = MaterialTheme.typography.labelSmall, color = DublStamina)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentChangeBar(
+    change: RecentChange,
+    onUndo: (() -> Unit)?,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(9.dp),
         color = change.accent.copy(alpha = 0.08f),
         border = BorderStroke(1.dp, change.accent.copy(alpha = 0.24f)),
     ) {
-        Text(
-            text = "Последнее изменение: ${change.text}",
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = change.accent,
-        )
+        Row(
+            modifier = Modifier.padding(start = 11.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Последнее: ${change.text}",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                color = change.accent,
+            )
+            if (onUndo != null) {
+                TextButton(onClick = onUndo) {
+                    Text("Отменить", color = change.accent)
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun KeyStats(character: DublCharacter) {
+private fun KeyStats(
+    character: DublCharacter,
+    onStatClick: (StatId) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            StatTile("Защита", character.defense.toString(), statAccent(QuickCheckId.DEFENSE), Modifier.weight(1f))
-            StatTile("Рефлексы", signed(character.reflexes), statAccent(QuickCheckId.REFLEXES), Modifier.weight(1f))
-            StatTile("Инициатива", signed(character.initiative), statAccent(QuickCheckId.INITIATIVE), Modifier.weight(1f))
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            StatTile("Стойкость", signed(character.fortitude), statAccent(QuickCheckId.FORTITUDE), Modifier.weight(1f))
-            StatTile("Бег", formatNumber(character.runFull), statAccent(QuickCheckId.RUN), Modifier.weight(1f), suffix = " м")
-            StatTile("Размер", character.size.toString(), statAccent(QuickCheckId.SIZE), Modifier.weight(1f))
+        StatId.entries.chunked(3).forEach { rowStats ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rowStats.forEach { stat ->
+                    val info = statInfo(stat, character)
+                    StatTile(
+                        stat = stat,
+                        value = info.value,
+                        accent = statAccent(stat),
+                        modifier = Modifier.weight(1f),
+                        onClick = { onStatClick(stat) },
+                    )
+                }
+            }
         }
     }
 }
 
-private fun statAccent(id: QuickCheckId): Color = when (id) {
-    QuickCheckId.DEFENSE -> Color(0xFFBB5863)
-    QuickCheckId.REFLEXES -> Color(0xFF65A0A8)
-    QuickCheckId.INITIATIVE -> DublGold
-    QuickCheckId.FORTITUDE -> Color(0xFF7FA06F)
-    QuickCheckId.RUN -> Color(0xFF6C96B5)
-    QuickCheckId.SIZE -> Color(0xFF8E80B5)
-    QuickCheckId.STRENGTH -> attributeAccent(AttributeId.STRENGTH)
-    QuickCheckId.DEXTERITY -> attributeAccent(AttributeId.DEXTERITY)
-    QuickCheckId.CONSTITUTION -> attributeAccent(AttributeId.CONSTITUTION)
-    QuickCheckId.SPEED -> attributeAccent(AttributeId.SPEED)
-    QuickCheckId.INTELLIGENCE -> attributeAccent(AttributeId.INTELLIGENCE)
-    QuickCheckId.PERCEPTION -> attributeAccent(AttributeId.PERCEPTION)
-    QuickCheckId.WILL -> attributeAccent(AttributeId.WILL)
-    QuickCheckId.CHARISMA -> attributeAccent(AttributeId.CHARISMA)
+private fun statAccent(id: StatId): Color = when (id) {
+    StatId.DEFENSE -> Color(0xFFBB5863)
+    StatId.REFLEXES -> Color(0xFF65A0A8)
+    StatId.INITIATIVE -> DublGold
+    StatId.FORTITUDE -> Color(0xFF7FA06F)
+    StatId.RUN -> Color(0xFF6C96B5)
+    StatId.SIZE -> Color(0xFF8E80B5)
 }
 
 @Composable
 private fun StatTile(
-    title: String,
+    stat: StatId,
     value: String,
     accent: Color,
     modifier: Modifier = Modifier,
-    suffix: String = "",
+    onClick: () -> Unit,
 ) {
     Surface(
-        modifier = modifier,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = accent.copy(alpha = 0.055f),
         border = BorderStroke(1.25.dp, accent.copy(alpha = 0.48f)),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 11.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Surface(
-                modifier = Modifier.size(width = 26.dp, height = 3.dp),
-                shape = RoundedCornerShape(50),
-                color = accent.copy(alpha = 0.9f),
-            ) {}
-            Spacer(Modifier.height(6.dp))
             Text(
-                text = value + suffix,
-                fontSize = 22.sp,
-                lineHeight = 25.sp,
+                text = stat.glyph,
+                fontSize = 17.sp,
+                lineHeight = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = accent,
             )
             Spacer(Modifier.height(3.dp))
             Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
+                text = value,
+                fontSize = 21.sp,
+                lineHeight = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = accent,
+            )
+            Text(
+                text = stat.title,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -883,21 +1253,111 @@ private fun StatTile(
     }
 }
 
+private fun statInfo(id: StatId, character: DublCharacter): StatInfo = when (id) {
+    StatId.DEFENSE -> StatInfo(
+        id = id,
+        value = character.defense.toString(),
+        formula = "10 − Размер + Скорость + Ловкость",
+        breakdown = listOf(
+            "10 − ${character.size} + ${character.speed} + ${character.dexterity}",
+            "Итог: ${character.defense}",
+        ),
+    )
+    StatId.REFLEXES -> StatInfo(
+        id = id,
+        value = signed(character.reflexes),
+        formula = "Скорость + Ловкость",
+        breakdown = listOf(
+            "${character.speed} + ${character.dexterity}",
+            "Итог: ${signed(character.reflexes)}",
+        ),
+    )
+    StatId.INITIATIVE -> StatInfo(
+        id = id,
+        value = signed(character.initiative),
+        formula = "Скорость + Восприятие",
+        breakdown = listOf(
+            "${character.speed} + ${character.perception}",
+            "Итог: ${signed(character.initiative)}",
+        ),
+    )
+    StatId.FORTITUDE -> StatInfo(
+        id = id,
+        value = signed(character.fortitude),
+        formula = "Телосложение + Воля",
+        breakdown = listOf(
+            "${character.constitution} + ${character.will}",
+            "Итог: ${signed(character.fortitude)}",
+        ),
+    )
+    StatId.RUN -> {
+        val multiplier = runMultiplier(character)
+        StatInfo(
+            id = id,
+            value = "${formatNumber(character.runFull)} м",
+            formula = "Базовый бег + Скорость × множитель размера/ног",
+            breakdown = listOf(
+                "Базовый бег: ${formatNumber(character.runBase)} м",
+                "Скорость: ${character.speed}",
+                "Множитель: ${formatNumber(multiplier)}",
+                "Итог: ${formatNumber(character.runBase)} + ${character.speed} × ${formatNumber(multiplier)} = ${formatNumber(character.runFull)} м",
+            ),
+            note = "Множитель зависит от Размера (${character.size}) и количества ног (${character.legs}).",
+        )
+    }
+    StatId.SIZE -> StatInfo(
+        id = id,
+        value = character.size.toString(),
+        formula = "Задаётся напрямую",
+        breakdown = listOf(
+            "Размер: ${character.size}",
+            "Модификатор Силы: ${signed(character.size - 5)}",
+            "Модификатор Скорости: ${signed(5 - character.size)}",
+        ),
+        note = "Размер влияет на Силу, Скорость, Защиту, здоровье и Бег.",
+    )
+}
+
+private fun runMultiplier(character: DublCharacter): Double = if (character.legs >= 3) {
+    when (character.size.coerceIn(1, 10)) {
+        1 -> 0.5
+        2 -> 1.0
+        3 -> 1.5
+        4, 5, 6 -> 2.0
+        7 -> 3.0
+        8 -> 4.0
+        9 -> 5.0
+        else -> 6.0
+    }
+} else {
+    when (character.size.coerceIn(1, 10)) {
+        1 -> 0.125
+        2 -> 0.25
+        3 -> 0.5
+        4, 5 -> 1.0
+        6, 7 -> 1.5
+        8 -> 2.0
+        9 -> 3.0
+        else -> 4.0
+    }
+}
+
 @Composable
-private fun QuickChecksSection(
+private fun FavoriteSkillsSection(
     character: DublCharacter,
-    favoriteChecks: List<QuickCheckId>,
+    favoriteSkills: List<ResolvedSkill>,
     onConfigure: () -> Unit,
+    onSkillClick: (ResolvedSkill) -> Unit,
 ) {
     Column {
         SectionTitle(
             title = "Избранные проверки",
-            trailing = if (favoriteChecks.isEmpty()) "Добавить" else "Настроить",
+            trailing = if (favoriteSkills.isEmpty()) "Добавить" else "Настроить",
             onTrailingClick = onConfigure,
         )
         Spacer(Modifier.height(8.dp))
 
-        if (favoriteChecks.isEmpty()) {
+        if (favoriteSkills.isEmpty()) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -908,82 +1368,81 @@ private fun QuickChecksSection(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)),
             ) {
                 Text(
-                    text = "Закрепите до четырёх часто используемых проверок и показателей.",
+                    text = "Добавьте любые умения. Ограничения по количеству нет.",
                     modifier = Modifier.padding(14.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                favoriteChecks.chunked(2).forEach { rowChecks ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        rowChecks.forEach { check ->
-                            QuickCheckTile(
-                                check = check,
-                                character = character,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        if (rowChecks.size == 1) Spacer(Modifier.weight(1f))
-                    }
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(end = 4.dp),
+            ) {
+                items(favoriteSkills, key = { it.id }) { skill ->
+                    FavoriteSkillTile(
+                        character = character,
+                        skill = skill,
+                        onClick = { onSkillClick(skill) },
+                    )
                 }
             }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                text = "Тап по умению — быстрый бросок",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 @Composable
-private fun QuickCheckTile(
-    check: QuickCheckId,
+private fun FavoriteSkillTile(
     character: DublCharacter,
-    modifier: Modifier = Modifier,
+    skill: ResolvedSkill,
+    onClick: () -> Unit,
 ) {
-    val accent = statAccent(check)
+    val calculation = character.skillCalculation(skill)
     Surface(
-        modifier = modifier,
+        modifier = Modifier
+            .width(170.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(11.dp),
-        color = accent.copy(alpha = 0.045f),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.38f)),
+        color = DublGold.copy(alpha = 0.045f),
+        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.36f)),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Text(
-                text = check.title,
-                modifier = Modifier.weight(1f),
+                text = skill.name,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
+                maxLines = 2,
             )
-            Text(
-                text = quickCheckValue(check, character),
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = accent,
-            )
+            Spacer(Modifier.height(5.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Text(
+                    text = skill.attributes.joinToString(" + ") { it.title },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = calculation.total?.let(::signed) ?: "—",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DublGold,
+                )
+            }
         }
     }
-}
-
-private fun quickCheckValue(check: QuickCheckId, character: DublCharacter): String = when (check) {
-    QuickCheckId.DEFENSE -> character.defense.toString()
-    QuickCheckId.REFLEXES -> signed(character.reflexes)
-    QuickCheckId.INITIATIVE -> signed(character.initiative)
-    QuickCheckId.FORTITUDE -> signed(character.fortitude)
-    QuickCheckId.RUN -> "${formatNumber(character.runFull)} м"
-    QuickCheckId.SIZE -> character.size.toString()
-    QuickCheckId.STRENGTH -> character.attribute(AttributeId.STRENGTH).toString()
-    QuickCheckId.DEXTERITY -> character.attribute(AttributeId.DEXTERITY).toString()
-    QuickCheckId.CONSTITUTION -> character.attribute(AttributeId.CONSTITUTION).toString()
-    QuickCheckId.SPEED -> character.attribute(AttributeId.SPEED).toString()
-    QuickCheckId.INTELLIGENCE -> character.attribute(AttributeId.INTELLIGENCE).toString()
-    QuickCheckId.PERCEPTION -> character.attribute(AttributeId.PERCEPTION).toString()
-    QuickCheckId.WILL -> character.attribute(AttributeId.WILL).toString()
-    QuickCheckId.CHARISMA -> character.attribute(AttributeId.CHARISMA).toString()
 }
 
 @Composable
@@ -1033,7 +1492,6 @@ private fun AttributeCard(
     onClick: () -> Unit,
 ) {
     val base = character.attributes[id]?.base ?: character.attributeRaw(id)
-    val raw = character.attributeRaw(id)
     val total = character.attribute(id)
     val effectiveModifier = total - base
     val accent = attributeAccent(id)
@@ -1068,13 +1526,6 @@ private fun AttributeCard(
                         style = MaterialTheme.typography.labelLarge,
                         color = DublGold,
                     )
-                } else if (raw != base) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "База $base",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
             Text(
@@ -1094,6 +1545,7 @@ private fun ConditionPickerSheet(
     active: Set<CharacterConditionId>,
     autoWeakness: Boolean,
     onToggle: (CharacterConditionId) -> Unit,
+    onInfo: (CharacterConditionId) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -1107,7 +1559,7 @@ private fun ConditionPickerSheet(
         ) {
             Text("Состояния", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Выберите активные состояния персонажа. Слабость включается автоматически при нулевой выносливости.",
+                "Слабость включается автоматически при нулевой Выносливости. Нажмите «?» для описания из правил.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1120,10 +1572,7 @@ private fun ConditionPickerSheet(
                     val auto = condition == CharacterConditionId.WEAKNESS && autoWeakness
                     val checked = condition in active || auto
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(enabled = !auto) { onToggle(condition) },
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),
                         color = if (checked) DublAccentSoft.copy(alpha = 0.38f) else MaterialTheme.colorScheme.surface,
                         border = BorderStroke(
@@ -1133,36 +1582,34 @@ private fun ConditionPickerSheet(
                         ),
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
                                 checked = checked,
-                                onCheckedChange = if (auto) null else { { onToggle(condition) } },
+                                onCheckedChange = if (auto) null else { _ -> onToggle(condition) },
                                 enabled = !auto,
                             )
-                            Column(Modifier.weight(1f).padding(top = 3.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        condition.title,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                    if (auto) {
-                                        Spacer(Modifier.width(7.dp))
-                                        Text(
-                                            "автоматически",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = DublStamina,
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = condition.title,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .clickable(enabled = !auto) { onToggle(condition) }
+                                    .padding(vertical = 8.dp),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            if (auto) {
                                 Text(
-                                    condition.summary,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "авто",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DublStamina,
                                 )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            TextButton(onClick = { onInfo(condition) }) {
+                                Text("?")
                             }
                         }
                     }
@@ -1174,11 +1621,70 @@ private fun ConditionPickerSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FavoriteChecksSheet(
-    selected: List<QuickCheckId>,
-    onToggle: (QuickCheckId) -> Unit,
+private fun ConditionDetailSheet(
+    condition: CharacterConditionId,
+    active: Boolean,
+    automatic: Boolean,
+    onToggle: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Text(condition.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                condition.rulesSummary,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (automatic) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Сейчас состояние активно автоматически из-за нулевой Выносливости.",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = DublStamina,
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            if (!automatic) {
+                if (active) {
+                    OutlinedButton(
+                        onClick = onToggle,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    ) { Text("Убрать состояние") }
+                } else {
+                    Button(
+                        onClick = onToggle,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    ) { Text("Добавить состояние") }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FavoriteSkillsSheet(
+    character: DublCharacter,
+    selectedIds: List<String>,
+    onToggle: (String) -> Unit,
+    onMove: (String, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val availableSkills = character.resolvedSkills()
+    val selectedSkills = selectedIds.mapNotNull { character.resolveSkill(it) }
+    val unselectedSkills = availableSkills.filter { it.id !in selectedIds }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -1190,32 +1696,52 @@ private fun FavoriteChecksSheet(
         ) {
             Text("Избранные проверки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Закрепите до четырёх значений. Позже сюда же можно будет добавить умения.",
+                "В избранное добавляются только умения. Ограничения по количеству нет.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Выбрано ${selected.size} / 4",
+                "Выбрано: ${selectedSkills.size}",
                 style = MaterialTheme.typography.labelLarge,
-                color = if (selected.size >= 4) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = DublGold,
             )
             Spacer(Modifier.height(10.dp))
 
             LazyColumn(
-                modifier = Modifier.heightIn(max = 500.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.heightIn(max = 540.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                item { PickerSectionLabel("Показатели") }
-                items(QuickCheckId.entries.take(6), key = { it.name }) { check ->
-                    FavoriteCheckRow(check, selected, onToggle)
+                if (selectedSkills.isNotEmpty()) {
+                    item { PickerSectionLabel("Избранные") }
+                    itemsIndexed(selectedSkills, key = { _, skill -> skill.id }) { index, skill ->
+                        FavoriteSkillPickerRow(
+                            character = character,
+                            skill = skill,
+                            checked = true,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < selectedSkills.lastIndex,
+                            onToggle = { onToggle(skill.id) },
+                            onMoveUp = { onMove(skill.id, -1) },
+                            onMoveDown = { onMove(skill.id, 1) },
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(6.dp))
+                        PickerSectionLabel("Другие умения")
+                    }
                 }
-                item {
-                    Spacer(Modifier.height(6.dp))
-                    PickerSectionLabel("Характеристики")
-                }
-                items(QuickCheckId.entries.drop(6), key = { it.name }) { check ->
-                    FavoriteCheckRow(check, selected, onToggle)
+                items(unselectedSkills, key = { it.id }) { skill ->
+                    FavoriteSkillPickerRow(
+                        character = character,
+                        skill = skill,
+                        checked = false,
+                        canMoveUp = false,
+                        canMoveDown = false,
+                        onToggle = { onToggle(skill.id) },
+                        onMoveUp = {},
+                        onMoveDown = {},
+                    )
                 }
             }
         }
@@ -1234,46 +1760,604 @@ private fun PickerSectionLabel(text: String) {
 }
 
 @Composable
-private fun FavoriteCheckRow(
-    check: QuickCheckId,
-    selected: List<QuickCheckId>,
-    onToggle: (QuickCheckId) -> Unit,
+private fun FavoriteSkillPickerRow(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    checked: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onToggle: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
 ) {
-    val checked = check in selected
-    val canSelect = checked || selected.size < 4
+    val calculation = character.skillCalculation(skill)
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(9.dp))
-            .clickable(enabled = canSelect) { onToggle(check) },
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(9.dp),
-        color = if (checked) statAccent(check).copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface,
+        color = if (checked) DublGold.copy(alpha = 0.05f) else MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             1.dp,
-            if (checked) statAccent(check).copy(alpha = 0.42f)
+            if (checked) DublGold.copy(alpha = 0.42f)
             else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
         ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Checkbox(
-                checked = checked,
-                onCheckedChange = { if (canSelect) onToggle(check) },
-                enabled = canSelect,
-            )
+            Checkbox(checked = checked, onCheckedChange = { onToggle() })
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(7.dp))
+                    .clickable(onClick = onToggle)
+                    .padding(vertical = 7.dp),
+            ) {
+                Text(skill.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "Бонус ${calculation.total?.let(::signed) ?: "—"} · Ранг ${skill.rank}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (checked) {
+                TextButton(onClick = onMoveUp, enabled = canMoveUp) { Text("↑") }
+                TextButton(onClick = onMoveDown, enabled = canMoveDown) { Text("↓") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillRollSheet(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    onDismiss: () -> Unit,
+) {
+    val calculation = character.skillCalculation(skill)
+    val skillBonus = calculation.total
+    var advantageCount by remember(skill.id) { mutableStateOf(0) }
+    var hindranceCount by remember(skill.id) { mutableStateOf(0) }
+    var situationalText by remember(skill.id) { mutableStateOf("0") }
+    var result by remember(skill.id) { mutableStateOf<RollResult?>(null) }
+
+    val situationalBonus = situationalText.toIntOrNull()?.coerceIn(-99, 99) ?: 0
+    val mode = when {
+        advantageCount > 0 -> RollMode.ADVANTAGE
+        hindranceCount > 0 -> RollMode.HINDRANCE
+        else -> RollMode.NORMAL
+    }
+    val effectCount = when (mode) {
+        RollMode.ADVANTAGE -> advantageCount
+        RollMode.HINDRANCE -> hindranceCount
+        RollMode.NORMAL -> 0
+    }
+
+    fun invalidateResult() {
+        result = null
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Text(skill.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = check.title,
+                text = skillBonus?.let { "Бонус умения: ${signed(it)}" } ?: "Проверка недоступна",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (skillBonus != null) DublGold else DublAccent,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                calculation.formulaText(skill),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (skillBonus != null) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Условия броска",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                RollCounter(
+                    title = "Преимущества",
+                    count = advantageCount,
+                    onMinus = {
+                        advantageCount = (advantageCount - 1).coerceAtLeast(0)
+                        invalidateResult()
+                    },
+                    onPlus = {
+                        advantageCount += 1
+                        hindranceCount = 0
+                        invalidateResult()
+                    },
+                )
+                Spacer(Modifier.height(7.dp))
+                RollCounter(
+                    title = "Помехи",
+                    count = hindranceCount,
+                    onMinus = {
+                        hindranceCount = (hindranceCount - 1).coerceAtLeast(0)
+                        invalidateResult()
+                    },
+                    onPlus = {
+                        hindranceCount += 1
+                        advantageCount = 0
+                        invalidateResult()
+                    },
+                )
+
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = situationalText,
+                    onValueChange = { raw ->
+                        situationalText = sanitizeSignedBonus(raw)
+                        invalidateResult()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Ситуационный бонус / штраф") },
+                    supportingText = { Text("Например: +2 за инструменты или −3 за условия") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    trailingIcon = {
+                        TextButton(
+                            onClick = {
+                                val value = situationalText.toIntOrNull() ?: 0
+                                situationalText = when {
+                                    value > 0 -> (-value).toString()
+                                    value < 0 -> abs(value).toString()
+                                    else -> "0"
+                                }
+                                invalidateResult()
+                            },
+                        ) { Text("±") }
+                    },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    text = "Преимущества и помехи не смешиваются автоматически: выбор одного типа сбрасывает другой, потому что книга не описывает их совместное разрешение.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Spacer(Modifier.height(9.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+                ) {
+                    Text(
+                        text = rollSetupText(mode, effectCount, skillBonus, situationalBonus),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        result = rollSkill(
+                            mode = mode,
+                            effectCount = effectCount,
+                            skillBonus = skillBonus,
+                            situationalBonus = situationalBonus,
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 12.dp),
+                ) {
+                    Text("Бросить")
+                }
+            }
+
+            result?.let { roll ->
+                Spacer(Modifier.height(18.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(13.dp),
+                    color = DublGold.copy(alpha = 0.06f),
+                    border = BorderStroke(1.dp, DublGold.copy(alpha = 0.42f)),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = roll.total.toString(),
+                            fontSize = 42.sp,
+                            lineHeight = 46.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DublGold,
+                        )
+                        Text(
+                            text = "Итог проверки",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            text = when (roll.mode) {
+                                RollMode.NORMAL -> "Обычный бросок · 2d6"
+                                RollMode.ADVANTAGE -> "Преимущества ×${roll.effectCount} · ${roll.dice.size}d6 · выбрать 2 наибольших"
+                                RollMode.HINDRANCE -> "Помехи ×${roll.effectCount} · ${roll.dice.size}d6 · выбрать 2 наименьших"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp),
+                        ) {
+                            itemsIndexed(roll.dice) { index, die ->
+                                DiceChip(value = die, selected = index in roll.chosenIndices)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = buildRollBreakdown(roll),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        roll.note?.let { note ->
+                            Spacer(Modifier.height(7.dp))
+                            Text(
+                                text = note,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = DublAccent,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RollCounter(
+    title: String,
+    count: Int,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (canSelect) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
             )
-            Surface(
-                modifier = Modifier.size(width = 22.dp, height = 3.dp),
-                shape = RoundedCornerShape(50),
-                color = statAccent(check).copy(alpha = if (canSelect) 0.85f else 0.35f),
-            ) {}
+            OutlinedButton(
+                onClick = onMinus,
+                enabled = count > 0,
+                contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
+            ) { Text("−") }
+            Text(
+                text = count.toString(),
+                modifier = Modifier.width(28.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            OutlinedButton(
+                onClick = onPlus,
+                contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
+            ) { Text("+") }
+        }
+    }
+}
+
+@Composable
+private fun DiceChip(value: Int, selected: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(9.dp),
+        color = if (selected) DublGold.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) DublGold else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+        ),
+    ) {
+        Text(
+            text = value.toString(),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun rollSkill(
+    mode: RollMode,
+    effectCount: Int,
+    skillBonus: Int,
+    situationalBonus: Int,
+): RollResult {
+    val extraDice = effectCount.coerceAtLeast(0)
+    val dice = List(2 + extraDice) { Random.nextInt(1, 7) }
+    val chosenIndices = when (mode) {
+        RollMode.NORMAL -> setOf(0, 1)
+        RollMode.ADVANTAGE -> dice.indices.sortedByDescending { dice[it] }.take(2).toSet()
+        RollMode.HINDRANCE -> dice.indices.sortedBy { dice[it] }.take(2).toSet()
+    }
+    val chosenValues = chosenIndices.map { dice[it] }
+    val pair = chosenValues.sorted()
+    val hasExtraDice = dice.size > 2
+    val ambiguitySuffix = if (hasExtraDice) {
+        " При дополнительных костях книга не закрепляет, определяется ли дубль до или после выбора двух костей."
+    } else {
+        ""
+    }
+    val note = when {
+        pair == listOf(1, 1) -> "Выбран дубль единиц — критический провал.$ambiguitySuffix"
+        pair == listOf(6, 6) -> "Выбран дубль шестёрок — критический успех и кость превосходства.$ambiguitySuffix"
+        pair.size == 2 && pair[0] == pair[1] -> "Выбран дубль — по правилам даёт дополнительную кость преимущества.$ambiguitySuffix"
+        else -> null
+    }
+    return RollResult(
+        mode = mode,
+        effectCount = extraDice,
+        dice = dice,
+        chosenIndices = chosenIndices,
+        skillBonus = skillBonus,
+        situationalBonus = situationalBonus,
+        total = chosenValues.sum() + skillBonus + situationalBonus,
+        note = note,
+    )
+}
+
+private fun rollSetupText(
+    mode: RollMode,
+    effectCount: Int,
+    skillBonus: Int,
+    situationalBonus: Int,
+): String {
+    val diceText = when (mode) {
+        RollMode.NORMAL -> "2d6"
+        RollMode.ADVANTAGE -> "${2 + effectCount}d6, оставить 2 наибольших"
+        RollMode.HINDRANCE -> "${2 + effectCount}d6, оставить 2 наименьших"
+    }
+    return buildString {
+        append(diceText)
+        append(" · умение ").append(signed(skillBonus))
+        if (situationalBonus != 0) {
+            append(" · ситуация ").append(signed(situationalBonus))
+        }
+    }
+}
+
+private fun buildRollBreakdown(roll: RollResult): String = buildString {
+    append("Кости ")
+    append(roll.chosenIndices.sorted().joinToString(" + ") { roll.dice[it].toString() })
+    append(" · умение ").append(signed(roll.skillBonus))
+    if (roll.situationalBonus != 0) {
+        append(" · ситуация ").append(signed(roll.situationalBonus))
+    }
+}
+
+private fun sanitizeSignedBonus(raw: String): String {
+    if (raw.isBlank()) return ""
+    val negative = raw.trimStart().startsWith('-')
+    val digits = raw.filter(Char::isDigit).take(2)
+    if (digits.isEmpty()) return if (negative) "-" else ""
+    return (if (negative) "-" else "") + digits
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResourceVisibilitySheet(
+    character: DublCharacter,
+    hidden: Set<CharacterSheetResourceId>,
+    onToggle: (CharacterSheetResourceId) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Text("Ресурсы на листе", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "Скрытие влияет только на отображение. Значения ресурсов не удаляются.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+            ResourceVisibilityRow(
+                title = CharacterSheetResourceId.HEALTH.title,
+                visible = CharacterSheetResourceId.HEALTH !in hidden,
+                enabled = true,
+                onToggle = { onToggle(CharacterSheetResourceId.HEALTH) },
+            )
+            ResourceVisibilityRow(
+                title = CharacterSheetResourceId.ENDURANCE.title,
+                visible = CharacterSheetResourceId.ENDURANCE !in hidden,
+                enabled = true,
+                onToggle = { onToggle(CharacterSheetResourceId.ENDURANCE) },
+            )
+            ResourceVisibilityRow(
+                title = CharacterSheetResourceId.MANA.title,
+                visible = character.manaEnabled && CharacterSheetResourceId.MANA !in hidden,
+                enabled = character.manaEnabled,
+                subtitle = if (character.manaEnabled) null else "Мана отключена у персонажа",
+                onToggle = { onToggle(CharacterSheetResourceId.MANA) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResourceVisibilityRow(
+    title: String,
+    visible: Boolean,
+    enabled: Boolean,
+    subtitle: String? = null,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Switch(
+            checked = visible,
+            onCheckedChange = { onToggle() },
+            enabled = enabled,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StatInfoSheet(
+    info: StatInfo,
+    character: DublCharacter,
+    onSetSize: (Int) -> Unit,
+    onSetLegs: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var sizeText by remember(character.id, character.size) { mutableStateOf(character.size.toString()) }
+    var legsText by remember(character.id, character.legs) { mutableStateOf(character.legs.toString()) }
+    val accent = statAccent(info.id)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(42.dp),
+                    shape = RoundedCornerShape(11.dp),
+                    color = accent.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(info.id.glyph, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = accent)
+                    }
+                }
+                Spacer(Modifier.width(11.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(info.id.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        info.value,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = accent,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("Формула", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = DublGold)
+            Text(info.formula, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(10.dp))
+            info.breakdown.forEach { line ->
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            info.note?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            if (info.id == StatId.SIZE) {
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(14.dp))
+                Text("Быстрое редактирование", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = sizeText,
+                    onValueChange = { sizeText = it.filter(Char::isDigit).take(2) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Размер 1–10") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        onSetSize(sizeText.toIntOrNull()?.coerceIn(1, 10) ?: character.size)
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Сохранить размер") }
+            }
+
+            if (info.id == StatId.RUN) {
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(14.dp))
+                Text("Быстрое редактирование", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = legsText,
+                    onValueChange = { legsText = it.filter(Char::isDigit).take(2) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Количество ног") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        onSetLegs(legsText.toIntOrNull()?.coerceAtLeast(2) ?: character.legs)
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Сохранить") }
+            }
         }
     }
 }
@@ -1338,8 +2422,7 @@ private fun ResourceAdjustSheet(
 private fun AttributeAdjustSheet(
     id: AttributeId,
     character: DublCharacter,
-    onMinus: () -> Unit,
-    onPlus: () -> Unit,
+    onChange: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val base = character.attributes[id]?.base ?: character.attributeRaw(id)
@@ -1384,12 +2467,12 @@ private fun AttributeAdjustSheet(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
-                    onClick = onMinus,
+                    onClick = { onChange(-1) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("− 1") }
                 Button(
-                    onClick = onPlus,
+                    onClick = { onChange(1) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("+ 1") }
@@ -1458,9 +2541,7 @@ private fun HealthControlSheet(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = DublAccent),
                     shape = RoundedCornerShape(10.dp),
-                ) {
-                    Text("Получить урон")
-                }
+                ) { Text("Получить урон") }
                 OutlinedButton(
                     onClick = {
                         if (amount > 0) onChange(amount)
@@ -1469,9 +2550,7 @@ private fun HealthControlSheet(
                     enabled = amount > 0 && current < maximum,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
-                ) {
-                    Text("Лечение")
-                }
+                ) { Text("Лечение") }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -1482,9 +2561,50 @@ private fun HealthControlSheet(
                 },
                 enabled = current < maximum,
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Восстановить всё здоровье")
-            }
+            ) { Text("Восстановить всё здоровье") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TextValueEditSheet(
+    title: String,
+    initialValue: String,
+    numeric: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var value by remember(initialValue) { mutableStateOf(initialValue) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = value,
+                onValueChange = { input ->
+                    value = if (numeric) input.filter(Char::isDigit).take(9) else input.take(80)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text,
+                ),
+                singleLine = true,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onSave(value) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            ) { Text("Сохранить") }
         }
     }
 }
@@ -1505,7 +2625,7 @@ private fun EditCharacterDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Редактировать персонажа") },
+        title = { Text("Дополнительное редактирование") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Имя") }, singleLine = true)
@@ -1563,6 +2683,11 @@ private fun NumericField(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,
     )
+}
+
+private fun resourceChangeText(label: String, delta: Int): String {
+    val sign = if (delta > 0) "+" else "−"
+    return "$sign${abs(delta)} $label"
 }
 
 private fun signed(value: Int): String = if (value >= 0) "+$value" else value.toString()
