@@ -2,12 +2,23 @@ package com.dubl.character.android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val DublBackground = Color(0xFF0D1015)
-val DublSurface = Color(0xFF151A22)
-val DublSurfaceRaised = Color(0xFF1C222C)
-val DublBorder = Color(0xFF2D3745)
-val DublText = Color(0xFFF1F3F6)
-val DublMuted = Color(0xFFA5AFBC)
-val DublAccent = Color(0xFFC7A46B)
-val DublAccentSoft = Color(0xFF30281D)
-val DublDanger = Color(0xFFE07B7B)
+// Desktop DUBL 0.14 identity: graphite surfaces + restrained crimson accent.
+val DublBackground = Color(0xFF0E1014)
+val DublSurface = Color(0xFF191C23)
+val DublSurfaceInset = Color(0xFF13161B)
+val DublSurfaceRaised = Color(0xFF1D2028)
+val DublBorder = Color(0xFF30343E)
+val DublText = Color(0xFFEEE9E1)
+val DublMuted = Color(0xFFA1A5B0)
+
+val DublAccent = Color(0xFFA83948)
+val DublAccentStrong = Color(0xFFBB5863)
+val DublAccentSoft = Color(0xFF39252E)
+val DublFocus = Color(0xFFD4868F)
+val DublGold = Color(0xFFD0AE7E)
+
+val DublHealth = Color(0xFFB65866)
+val DublStamina = Color(0xFFB49B68)
+val DublMana = Color(0xFF8095C7)
+val DublCustomResource = Color(0xFF71A492)
+val DublDanger = Color(0xFFD77B86)

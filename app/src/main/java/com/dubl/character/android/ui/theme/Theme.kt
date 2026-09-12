@@ -7,9 +7,13 @@ import androidx.compose.ui.graphics.Color
 
 private val Colors = darkColorScheme(
     primary = DublAccent,
-    onPrimary = Color(0xFF211A11),
+    onPrimary = Color.White,
     primaryContainer = DublAccentSoft,
     onPrimaryContainer = DublText,
+    secondary = DublGold,
+    onSecondary = Color(0xFF211B13),
+    secondaryContainer = Color(0xFF2D271E),
+    onSecondaryContainer = DublText,
     background = DublBackground,
     onBackground = DublText,
     surface = DublSurface,
@@ -17,7 +21,9 @@ private val Colors = darkColorScheme(
     surfaceVariant = DublSurfaceRaised,
     onSurfaceVariant = DublMuted,
     outline = DublBorder,
+    outlineVariant = DublBorder,
     error = DublDanger,
+    onError = Color.White,
 )
 
 @Composable
