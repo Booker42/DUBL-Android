@@ -65,7 +65,7 @@ fun DublApp() {
         ) {
             when (selected) {
                 AppSection.OVERVIEW -> OverviewScreen(controller)
-                AppSection.SKILLS -> SkillsScreen(controller.active)
+                AppSection.SKILLS -> SkillsScreen(controller)
                 AppSection.MAGIC -> PlaceholderScreen(
                     "Магия",
                     "Следом перенесём силу магии, школы, уровни школ, заклинания и расход маны.",

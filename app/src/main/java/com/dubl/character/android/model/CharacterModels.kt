@@ -31,6 +31,8 @@ data class DublCharacter(
     val manaEnabled: Boolean = false,
     val manaCurrent: Int = 0,
     val manaMaximum: Int = 0,
+    val skills: Map<String, CharacterSkill> = emptyMap(),
+    val hiddenSkillIds: Set<String> = emptySet(),
 ) {
     fun attributeRaw(id: AttributeId): Int = attributes[id]?.total ?: 0
 
@@ -112,12 +114,22 @@ data class DublCharacter(
         }
 
     fun normalized(): DublCharacter {
+        val normalizedSkills = skills.mapValues { (_, skill) ->
+            skill.copy(
+                rank = skill.rank.coerceIn(0, 10),
+                attributes = skill.attributes.distinct(),
+            )
+        }
         val clamped = copy(
             experience = experience.coerceAtLeast(0),
             size = size.coerceIn(1, 10),
             legs = legs.coerceAtLeast(2),
             enduranceCurrent = enduranceCurrent.coerceIn(0, 3),
             manaMaximum = manaMaximum.coerceAtLeast(0),
+            skills = normalizedSkills,
+            hiddenSkillIds = hiddenSkillIds.filterTo(linkedSetOf()) { id ->
+                SkillCatalog.builtIns.any { it.id == id } || normalizedSkills.containsKey(id)
+            },
         )
         return clamped.copy(
             hpCurrent = clamped.hpCurrent.coerceIn(0, clamped.healthMaximum),

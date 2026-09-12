@@ -4,7 +4,9 @@ import android.content.Context
 import com.dubl.character.android.model.AppSnapshot
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.AttributeValue
+import com.dubl.character.android.model.CharacterSkill
 import com.dubl.character.android.model.DublCharacter
+import com.dubl.character.android.model.UntrainedRule
 import com.dubl.character.android.model.defaultAttributes
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,7 +36,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 1)
+        put("schema", 2)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -61,6 +63,24 @@ class CharacterRepository(context: Context) {
                 })
             }
         })
+        put("skills", JSONArray().apply {
+            character.skills.values.forEach { put(encodeSkill(it)) }
+        })
+        put("hiddenSkillIds", JSONArray().apply {
+            character.hiddenSkillIds.forEach { put(it) }
+        })
+    }
+
+    private fun encodeSkill(skill: CharacterSkill): JSONObject = JSONObject().apply {
+        put("id", skill.id)
+        skill.definitionId?.let { put("definitionId", it) }
+        put("name", skill.name)
+        put("description", skill.description)
+        put("rank", skill.rank)
+        put("attributes", JSONArray().apply { skill.attributes.forEach { put(it.name) } })
+        put("modifier", skill.modifier)
+        put("formulaNote", skill.formulaNote)
+        skill.untrainedOverride?.let { put("untrainedOverride", it.name) }
     }
 
     private fun decodeSnapshot(root: JSONObject): AppSnapshot {
@@ -91,6 +111,20 @@ class CharacterRepository(context: Context) {
             }
         }
 
+        val skills = linkedMapOf<String, CharacterSkill>()
+        val jsonSkills = root.optJSONArray("skills") ?: JSONArray()
+        for (index in 0 until jsonSkills.length()) {
+            val item = jsonSkills.optJSONObject(index) ?: continue
+            val skill = decodeSkill(item) ?: continue
+            skills[skill.id] = skill
+        }
+
+        val hidden = linkedSetOf<String>()
+        val hiddenArray = root.optJSONArray("hiddenSkillIds") ?: JSONArray()
+        for (index in 0 until hiddenArray.length()) {
+            hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let(hidden::add)
+        }
+
         return DublCharacter(
             id = root.optString("id").ifBlank { UUID.randomUUID().toString() },
             name = root.optString("name", "Новый персонаж"),
@@ -104,7 +138,33 @@ class CharacterRepository(context: Context) {
             manaEnabled = root.optBoolean("manaEnabled", false),
             manaCurrent = root.optInt("manaCurrent", 0),
             manaMaximum = root.optInt("manaMaximum", 0),
+            skills = skills,
+            hiddenSkillIds = hidden,
         ).normalized()
+    }
+
+    private fun decodeSkill(root: JSONObject): CharacterSkill? {
+        val id = root.optString("id").ifBlank { return null }
+        val attrArray = root.optJSONArray("attributes") ?: JSONArray()
+        val attrs = buildList {
+            for (index in 0 until attrArray.length()) {
+                val raw = attrArray.optString(index)
+                AttributeId.entries.firstOrNull { it.name == raw }?.let { if (it !in this) add(it) }
+            }
+        }
+        val untrained = root.optString("untrainedOverride").takeIf { it.isNotBlank() }
+            ?.let { raw -> UntrainedRule.entries.firstOrNull { it.name == raw } }
+        return CharacterSkill(
+            id = id,
+            definitionId = root.optString("definitionId").takeIf { it.isNotBlank() },
+            name = root.optString("name", ""),
+            description = root.optString("description", ""),
+            rank = root.optInt("rank", 0),
+            attributes = attrs,
+            modifier = root.optInt("modifier", 0),
+            formulaNote = root.optString("formulaNote", ""),
+            untrainedOverride = untrained,
+        )
     }
 
     private companion object {
