@@ -34,7 +34,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,18 +66,12 @@ enum class CharacterResource {
     MANA,
 }
 
-private enum class HealthAction(val title: String, val sign: Int) {
-    DAMAGE("Получить урон", -1),
-    HEAL("Восстановить здоровье", 1),
-}
-
 @Composable
 fun OverviewScreen(controller: CharacterController) {
     val character = controller.active
     var showProfileEdit by remember { mutableStateOf(false) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
     var selectedAttribute by remember { mutableStateOf<AttributeId?>(null) }
-    var healthAction by remember { mutableStateOf<HealthAction?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -98,11 +91,6 @@ fun OverviewScreen(controller: CharacterController) {
             ResourceStrip(
                 character = character,
                 onResourceClick = { selectedResource = it },
-            )
-            Spacer(Modifier.height(10.dp))
-            QuickActions(
-                onDamage = { healthAction = HealthAction.DAMAGE },
-                onHeal = { healthAction = HealthAction.HEAL },
             )
         }
 
@@ -144,42 +132,36 @@ fun OverviewScreen(controller: CharacterController) {
     }
 
     selectedResource?.let { resource ->
-        val title: String
-        val current: Int
-        val maximum: Int
-        val color: Color
-        val change: (Int) -> Unit
         when (resource) {
             CharacterResource.HEALTH -> {
-                title = "Здоровье"
-                current = character.hpCurrent
-                maximum = character.healthMaximum
-                color = DublHealth
-                change = controller::changeHp
+                HealthControlSheet(
+                    current = character.hpCurrent,
+                    maximum = character.healthMaximum,
+                    onChange = controller::changeHp,
+                    onDismiss = { selectedResource = null },
+                )
             }
             CharacterResource.ENDURANCE -> {
-                title = "Выносливость"
-                current = character.enduranceCurrent
-                maximum = 3
-                color = DublStamina
-                change = controller::changeEndurance
+                ResourceAdjustSheet(
+                    title = "Выносливость",
+                    current = character.enduranceCurrent,
+                    maximum = 3,
+                    accent = DublStamina,
+                    onChange = controller::changeEndurance,
+                    onDismiss = { selectedResource = null },
+                )
             }
             CharacterResource.MANA -> {
-                title = "Мана"
-                current = character.manaCurrent
-                maximum = character.manaMaximum
-                color = DublMana
-                change = controller::changeMana
+                ResourceAdjustSheet(
+                    title = "Мана",
+                    current = character.manaCurrent,
+                    maximum = character.manaMaximum,
+                    accent = DublMana,
+                    onChange = controller::changeMana,
+                    onDismiss = { selectedResource = null },
+                )
             }
         }
-        ResourceAdjustSheet(
-            title = title,
-            current = current,
-            maximum = maximum,
-            accent = color,
-            onChange = change,
-            onDismiss = { selectedResource = null },
-        )
     }
 
     selectedAttribute?.let { id ->
@@ -192,15 +174,6 @@ fun OverviewScreen(controller: CharacterController) {
         )
     }
 
-    healthAction?.let { action ->
-        HealthActionSheet(
-            action = action,
-            current = character.hpCurrent,
-            maximum = character.healthMaximum,
-            onApply = { amount -> controller.changeHp(action.sign * amount) },
-            onDismiss = { healthAction = null },
-        )
-    }
 }
 
 @Composable
@@ -246,9 +219,12 @@ private fun CharacterHero(character: DublCharacter, onEdit: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.height(9.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MetaPill("Опыт ${character.experience}")
-                    MetaPill("Размер ${character.size}")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    MetaPill("Опыт ${character.experience}", Modifier.weight(1f))
+                    MetaPill("Очки способностей ${character.abilityPoints}", Modifier.weight(1f))
                 }
             }
         }
@@ -275,17 +251,21 @@ private fun CharacterHero(character: DublCharacter, onEdit: () -> Unit) {
 }
 
 @Composable
-private fun MetaPill(text: String) {
+private fun MetaPill(text: String, modifier: Modifier = Modifier) {
     Surface(
+        modifier = modifier,
         shape = RoundedCornerShape(7.dp),
         color = DublSurfaceInset,
         border = BorderStroke(1.dp, DublBorder),
     ) {
         Text(
             text = text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -406,30 +386,6 @@ private fun CompactResourceCard(
 }
 
 @Composable
-private fun QuickActions(onDamage: () -> Unit, onHeal: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Button(
-            onClick = onDamage,
-            modifier = Modifier.weight(1f),
-            colors = ButtonDefaults.buttonColors(containerColor = DublAccent),
-            shape = RoundedCornerShape(10.dp),
-        ) {
-            Text("Получить урон")
-        }
-        OutlinedButton(
-            onClick = onHeal,
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(10.dp),
-        ) {
-            Text("Лечение")
-        }
-    }
-}
-
-@Composable
 private fun KeyStats(character: DublCharacter) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -437,20 +393,19 @@ private fun KeyStats(character: DublCharacter) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             StatTile("Защита", character.defense.toString(), Modifier.weight(1f), prominent = true)
+            StatTile("Рефлексы", signed(character.reflexes), Modifier.weight(1f))
             StatTile("Инициатива", signed(character.initiative), Modifier.weight(1f), prominent = true)
-            StatTile("Бег", formatNumber(character.runFull), Modifier.weight(1f), suffix = " м")
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            StatTile("Рефлексы", signed(character.reflexes), Modifier.weight(1f))
             StatTile("Стойкость", signed(character.fortitude), Modifier.weight(1f))
-            StatTile("Очки способн.", character.abilityPoints.toString(), Modifier.weight(1f), accent = DublGold)
+            StatTile("Бег", formatNumber(character.runFull), Modifier.weight(1f), suffix = " м")
+            StatTile("Размер", character.size.toString(), Modifier.weight(1f))
         }
     }
 }
-
 @Composable
 private fun StatTile(
     title: String,
@@ -546,15 +501,10 @@ private fun AttributeCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = id.shortTitle,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
                     text = id.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (sizeDelta != 0) {
                     Text(
@@ -695,15 +645,14 @@ private fun AttributeAdjustSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HealthActionSheet(
-    action: HealthAction,
+private fun HealthControlSheet(
     current: Int,
     maximum: Int,
-    onApply: (Int) -> Unit,
+    onChange: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var amount by remember(action) { mutableIntStateOf(1) }
-    val result = (current + action.sign * amount).coerceIn(0, maximum)
+    var amountText by remember(current, maximum) { mutableStateOf("1") }
+    val amount = amountText.toIntOrNull()?.coerceAtLeast(0) ?: 0
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -715,41 +664,75 @@ private fun HealthActionSheet(
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(action.title, style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(16.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-            ) {
-                OutlinedButton(onClick = { amount = (amount - 1).coerceAtLeast(1) }) { Text("−") }
-                Text(amount.toString(), fontSize = 36.sp, fontWeight = FontWeight.Bold)
-                OutlinedButton(onClick = { amount += 1 }) { Text("+") }
-            }
-            Spacer(Modifier.height(12.dp))
+            Text("Здоровье", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
             Text(
-                "$current → $result здоровья",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "$current / $maximum",
+                fontSize = 36.sp,
+                lineHeight = 42.sp,
+                fontWeight = FontWeight.Bold,
+                color = DublHealth,
             )
             Spacer(Modifier.height(18.dp))
-            Button(
+
+            OutlinedTextField(
+                value = amountText,
+                onValueChange = { input -> amountText = input.filter(Char::isDigit).take(5) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Количество") },
+                supportingText = { Text("Нажмите на число и введите урон или лечение") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                ),
+            )
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = {
+                        if (amount > 0) onChange(-amount)
+                        onDismiss()
+                    },
+                    enabled = amount > 0 && current > 0,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = DublAccent),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("Получить урон")
+                }
+                OutlinedButton(
+                    onClick = {
+                        if (amount > 0) onChange(amount)
+                        onDismiss()
+                    },
+                    enabled = amount > 0 && current < maximum,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("Лечение")
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            TextButton(
                 onClick = {
-                    onApply(amount)
+                    onChange(maximum - current)
                     onDismiss()
                 },
+                enabled = current < maximum,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (action == HealthAction.DAMAGE) DublAccent else DublGold,
-                    contentColor = if (action == HealthAction.DAMAGE) Color.White else Color(0xFF211B13),
-                ),
-                shape = RoundedCornerShape(10.dp),
             ) {
-                Text("Применить")
+                Text("Восстановить всё здоровье")
             }
         }
     }
 }
-
 @Composable
 private fun EditCharacterDialog(
     character: DublCharacter,
