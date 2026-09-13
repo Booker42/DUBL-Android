@@ -2597,32 +2597,18 @@ private fun ResourceAdjustSheet(
                 fontWeight = FontWeight.Bold,
                 color = accent,
             )
-            Spacer(Modifier.height(10.dp))
-            val nextCost = CharacterEconomy.nextAttributeCost(base)
-            val refund = CharacterEconomy.previousAttributeRefund(base)
-            Text(
-                buildString {
-                    if (nextCost != null) append("Следующий ранг: $nextCost XP") else append("Максимум по таблице")
-                    if (refund != null) append(" · снижение: возврат $refund XP")
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(18.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
                     onClick = { onChange(-1) },
-                    enabled = base > -5,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("− 1") }
                 Button(
                     onClick = { onChange(1) },
-                    enabled = base < 10,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("+ 1") }
