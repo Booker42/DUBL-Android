@@ -32,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.dubl.character.android.data.MagicEquipmentCatalogRepository
@@ -61,16 +64,22 @@ import java.util.UUID
 fun EquipmentScreen(controller: CharacterController) {
     val character = controller.active
     val context = LocalContext.current.applicationContext
+    val largeText = LocalDensity.current.fontScale >= 1.2f
     val catalog = remember(context) { MagicEquipmentCatalogRepository(context).load() }
     var query by remember(character.id) { mutableStateOf("") }
     var selectedUid by remember(character.id) { mutableStateOf<String?>(null) }
     var showCatalog by remember(character.id) { mutableStateOf(false) }
     var editItem by remember(character.id) { mutableStateOf<GearItem?>(null) }
     var createItem by remember(character.id) { mutableStateOf(false) }
+    var pendingDeleteUid by remember(character.id) { mutableStateOf<String?>(null) }
 
     val load = MagicEquipmentRules.equipmentLoad(character)
     val capacity = MagicEquipmentRules.equipmentCapacity(character)
     val burden = MagicEquipmentRules.burden(character)
+    LaunchedEffect(character.id, catalog.version) {
+        controller.syncCatalogGearLoads(catalog.gear)
+    }
+
     val filtered = remember(character.gear.items, query) {
         val needle = query.trim().lowercase()
         character.gear.items.filter { item ->
@@ -107,18 +116,34 @@ fun EquipmentScreen(controller: CharacterController) {
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Column {
-                    Text("Предметы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("${character.gear.items.sumOf { it.quantity }} шт. · ${character.gear.items.size} позиций", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+            if (largeText) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column {
+                        Text("Предметы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${character.gear.items.sumOf { it.quantity }} шт. · ${character.gear.items.size} позиций", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = { createItem = true }, modifier = Modifier.weight(1f)) { Text("Свой") }
+                        Button(onClick = { showCatalog = true }, modifier = Modifier.weight(1f)) { Text("Из книги") }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = { createItem = true }) { Text("Свой") }
-                    Button(onClick = { showCatalog = true }) { Text("Из книги") }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Column {
+                        Text("Предметы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${character.gear.items.sumOf { it.quantity }} шт. · ${character.gear.items.size} позиций", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = { createItem = true }) { Text("Свой") }
+                        Button(onClick = { showCatalog = true }) { Text("Из книги") }
+                    }
                 }
             }
         }
@@ -139,11 +164,25 @@ fun EquipmentScreen(controller: CharacterController) {
                     Text(
                         if (character.gear.items.isEmpty()) "Снаряжение не добавлено" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                     )
                     Text(
                         if (character.gear.items.isEmpty()) "Добавьте оружие, доспехи или личные вещи из каталога." else "Измените поисковый запрос.",
                         color = DublMuted,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    if (character.gear.items.isEmpty()) {
+                        Button(onClick = { showCatalog = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Открыть каталог")
+                        }
+                        OutlinedButton(onClick = { createItem = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Создать свой предмет")
+                        }
+                    } else {
+                        OutlinedButton(onClick = { query = "" }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Сбросить поиск")
+                        }
+                    }
                 }
             }
         } else {
@@ -156,6 +195,9 @@ fun EquipmentScreen(controller: CharacterController) {
     if (showCatalog) {
         GearCatalogSheet(
             entries = catalog.gear,
+            ownedQuantities = character.gear.items
+                .mapNotNull { item -> item.catalogId?.let { it to item.quantity } }
+                .toMap(),
             onAdd = { controller.addCatalogGear(it) },
             onDismiss = { showCatalog = false },
         )
@@ -166,9 +208,9 @@ fun EquipmentScreen(controller: CharacterController) {
             GearDetailSheet(
                 item = item,
                 onEdit = { editItem = item; selectedUid = null },
-                onRemove = { controller.removeGearItem(uid); selectedUid = null },
+                onRemove = { selectedUid = null; pendingDeleteUid = uid },
                 onToggleCarried = { carried -> controller.updateGearItem(uid) { it.copy(carried = carried) } },
-                onQuantity = { qty -> controller.updateGearItem(uid) { it.copy(quantity = qty.coerceAtLeast(0)) } },
+                onQuantity = { qty -> controller.updateGearItem(uid) { it.copy(quantity = qty.coerceAtLeast(1)) } },
                 onDismiss = { selectedUid = null },
             )
         } ?: run { selectedUid = null }
@@ -191,6 +233,28 @@ fun EquipmentScreen(controller: CharacterController) {
             onDismiss = { editItem = null },
         )
     }
+
+    pendingDeleteUid?.let { uid ->
+        val item = character.gear.items.firstOrNull { it.uid == uid }
+        if (item != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDeleteUid = null },
+                title = { Text("Удалить предмет?") },
+                text = { Text("«${item.name}» будет удалён из снаряжения персонажа.") },
+                confirmButton = {
+                    Button(onClick = {
+                        controller.removeGearItem(uid)
+                        pendingDeleteUid = null
+                    }) { Text("Удалить") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteUid = null }) { Text("Отмена") }
+                },
+            )
+        } else {
+            pendingDeleteUid = null
+        }
+    }
 }
 
 @Composable
@@ -206,18 +270,28 @@ private fun LoadCard(
 ) {
     var manualText by remember(manualLoad, automatic) { mutableStateOf(formatNumber(manualLoad)) }
     DublCard(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
+        val largeText = LocalDensity.current.fontScale >= 1.2f
+        if (largeText) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Нагрузка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("${formatNumber(load)} / $capacity", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = DublStamina)
-            }
-            Column(horizontalAlignment = Alignment.End) {
                 Text(burdenTitle, style = MaterialTheme.typography.labelLarge, color = if (burdenPenalty < 0) DublDanger else DublFocus)
                 if (burdenPenalty != 0) Text("штраф $burdenPenalty", style = MaterialTheme.typography.bodySmall, color = DublDanger)
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("Нагрузка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${formatNumber(load)} / $capacity", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = DublStamina)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(burdenTitle, style = MaterialTheme.typography.labelLarge, color = if (burdenPenalty < 0) DublDanger else DublFocus)
+                    if (burdenPenalty != 0) Text("штраф $burdenPenalty", style = MaterialTheme.typography.bodySmall, color = DublDanger)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -256,7 +330,13 @@ private fun GearRow(item: GearItem, onClick: () -> Unit) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.name, fontWeight = FontWeight.Bold)
+                    Text(
+                        item.name,
+                        modifier = Modifier.weight(1f, fill = false),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (item.custom) {
                         Spacer(Modifier.width(6.dp))
                         Text("СВОЁ", style = MaterialTheme.typography.labelSmall, color = DublGold)
@@ -268,7 +348,8 @@ private fun GearRow(item: GearItem, onClick: () -> Unit) {
                         .joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = DublMuted,
-                    maxLines = 1,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -283,6 +364,7 @@ private fun GearRow(item: GearItem, onClick: () -> Unit) {
 @Composable
 private fun GearCatalogSheet(
     entries: List<GearCatalogEntry>,
+    ownedQuantities: Map<String, Int>,
     onAdd: (GearCatalogEntry) -> String,
     onDismiss: () -> Unit,
 ) {
@@ -302,7 +384,7 @@ private fun GearCatalogSheet(
                 .padding(horizontal = 16.dp),
         ) {
             Text("Каталог снаряжения", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("${entries.size} предметов из desktop-каталога", color = DublMuted)
+            Text("${entries.size} предметов в каталоге", color = DublMuted)
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Поиск") }, singleLine = true)
             Spacer(Modifier.height(8.dp))
@@ -311,7 +393,29 @@ private fun GearCatalogSheet(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
+                if (filtered.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text("Ничего не найдено", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Попробуйте другой запрос.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DublMuted,
+                            )
+                            if (query.isNotBlank()) {
+                                TextButton(onClick = { query = "" }) { Text("Сбросить поиск") }
+                            }
+                        }
+                    }
+                }
                 items(filtered, key = { it.id }) { entry ->
+                    val ownedQuantity = ownedQuantities[entry.id] ?: 0
                     Surface(
                         shape = RoundedCornerShape(13.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
@@ -322,15 +426,24 @@ private fun GearCatalogSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(entry.name, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    entry.fields.entries.take(2).joinToString(" · ") { "${it.key}: ${it.value}" }.ifBlank { entry.category },
+                                    entry.name,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    buildString {
+                                        append(entry.fields.entries.take(2).joinToString(" · ") { "${it.key}: ${it.value}" }.ifBlank { entry.category })
+                                        if (ownedQuantity > 0) append(" · у вас ×$ownedQuantity")
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = DublMuted,
-                                    maxLines = 1,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            TextButton(onClick = { onAdd(entry) }) { Text("+") }
+                            TextButton(onClick = { onAdd(entry) }) { Text(if (ownedQuantity > 0) "+1" else "+") }
                         }
                     }
                 }
@@ -361,7 +474,7 @@ private fun GearDetailSheet(
             Text(item.category, color = DublGold)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Количество", modifier = Modifier.weight(1f))
-                TextButton(onClick = { onQuantity((item.quantity - 1).coerceAtLeast(0)) }) { Text("−") }
+                TextButton(onClick = { onQuantity((item.quantity - 1).coerceAtLeast(1)) }, enabled = item.quantity > 1) { Text("−") }
                 Text(item.quantity.toString(), fontWeight = FontWeight.Bold)
                 TextButton(onClick = { onQuantity(item.quantity + 1) }) { Text("+") }
             }
@@ -376,9 +489,16 @@ private fun GearDetailSheet(
             if (item.fields.isNotEmpty()) {
                 HorizontalDivider()
                 item.fields.forEach { (key, value) ->
-                    Row(Modifier.fillMaxWidth()) {
-                        Text(key, modifier = Modifier.width(112.dp), style = MaterialTheme.typography.labelMedium, color = DublMuted)
-                        Text(value, modifier = Modifier.weight(1f))
+                    if (LocalDensity.current.fontScale >= 1.2f) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(key, style = MaterialTheme.typography.labelMedium, color = DublMuted)
+                            Text(value)
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(key, modifier = Modifier.width(112.dp), style = MaterialTheme.typography.labelMedium, color = DublMuted)
+                            Text(value, modifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -432,7 +552,7 @@ private fun GearEditDialog(
                 onSave(
                     initial.copy(
                         name = name.trim(),
-                        quantity = qtyText.toIntOrNull()?.coerceAtLeast(0) ?: 1,
+                        quantity = qtyText.toIntOrNull()?.coerceAtLeast(1) ?: 1,
                         load = loadText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
                         carried = carried,
                         description = description.trim(),

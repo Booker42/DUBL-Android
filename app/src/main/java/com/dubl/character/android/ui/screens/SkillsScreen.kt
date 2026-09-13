@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.CharacterSheetExtrasRepository
@@ -232,11 +233,25 @@ fun SkillsScreen(controller: CharacterController) {
         if (filtered.isEmpty()) {
             item {
                 DublCard(Modifier.fillMaxWidth()) {
-                    Text("Ничего не найдено", style = MaterialTheme.typography.titleMedium)
+                    Text("Ничего не найдено", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
                         "Сбросьте поиск/фильтр или верните скрытые умения.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = {
+                            query = ""
+                            selectedCategory = null
+                            trainedOnly = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Сбросить фильтры") }
+                    if (character.hiddenSkillIds.isNotEmpty()) {
+                        TextButton(onClick = { showHidden = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Открыть скрытые умения")
+                        }
+                    }
                 }
             }
         } else {
@@ -389,6 +404,8 @@ private fun SkillRow(
                             fontWeight = FontWeight.SemiBold,
                             color = primaryText,
                             modifier = Modifier.weight(1f, fill = false),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         skillOriginLabel(skill)?.let { origin ->
                             Spacer(Modifier.width(6.dp))
@@ -396,21 +413,24 @@ private fun SkillRow(
                         }
                     }
                     Spacer(Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        Text(
-                            skill.attributes.joinToString(" / ") { it.shortTitle },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (trained) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (skillHasRule(skill)) {
-                            CompactBadge("◇ Правило", DublAccent)
-                        }
-                        if (skill.modifier != 0) {
-                            CompactBadge("Поправка ${signedSkill(skill.modifier)}", DublGold)
+                    Text(
+                        skill.attributes.joinToString(" / ") { it.shortTitle },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (trained) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (skillHasRule(skill) || skill.modifier != 0) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            if (skillHasRule(skill)) {
+                                CompactBadge("◇ Правило", DublAccent)
+                            }
+                            if (skill.modifier != 0) {
+                                CompactBadge("Поправка ${signedSkill(skill.modifier)}", DublGold)
+                            }
                         }
                     }
                 }
@@ -447,15 +467,18 @@ private fun SkillRow(
                     accent = if (calculations.any { it.second.total != null }) DublAccent else MaterialTheme.colorScheme.error,
                     onClick = onBreakdown,
                 )
-                Text(
-                    text = nextCost?.let { "→ ${skill.rank + 1}: $it XP" } ?: "Макс. ранг",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                )
             }
+            Text(
+                text = nextCost?.let { "Следующий ранг ${skill.rank + 1} · $it XP" } ?: "Максимальный ранг",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 5.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

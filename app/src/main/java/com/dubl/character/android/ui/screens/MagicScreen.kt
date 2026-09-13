@@ -39,7 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.dubl.character.android.data.MagicEquipmentCatalogRepository
@@ -62,6 +64,7 @@ import java.util.UUID
 fun MagicScreen(controller: CharacterController) {
     val character = controller.active
     val context = LocalContext.current.applicationContext
+    val largeText = LocalDensity.current.fontScale >= 1.2f
     val catalog = remember(context) { MagicEquipmentCatalogRepository(context).load() }
     var spellQuery by remember(character.id) { mutableStateOf("") }
     var selectedSpellUid by remember(character.id) { mutableStateOf<String?>(null) }
@@ -70,6 +73,9 @@ fun MagicScreen(controller: CharacterController) {
     var createSpell by remember(character.id) { mutableStateOf(false) }
     var editSchoolIndex by remember(character.id) { mutableStateOf<Int?>(null) }
     var createSchool by remember(character.id) { mutableStateOf(false) }
+    var pendingDeleteSpellUid by remember(character.id) { mutableStateOf<String?>(null) }
+    var pendingDeleteSchoolIndex by remember(character.id) { mutableStateOf<Int?>(null) }
+    var schoolError by remember(character.id) { mutableStateOf<String?>(null) }
 
     val maxMana = character.effectiveManaMaximum
     val recovery = MagicEquipmentRules.manaRecoveryPerRound(character)
@@ -127,12 +133,12 @@ fun MagicScreen(controller: CharacterController) {
                             color = DublMuted,
                         )
                     }
-                    TextButton(onClick = { createSchool = true }) { Text("+ Добавить") }
+                    TextButton(onClick = { schoolError = null; createSchool = true }) { Text("+ Добавить") }
                 }
                 if (character.magic.schools.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     character.magic.schools.forEachIndexed { index, school ->
-                        SchoolRow(school = school, onClick = { editSchoolIndex = index })
+                        SchoolRow(school = school, onClick = { schoolError = null; editSchoolIndex = index })
                         if (index != character.magic.schools.lastIndex) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
                         }
@@ -142,18 +148,34 @@ fun MagicScreen(controller: CharacterController) {
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Column {
-                    Text("Книга заклинаний", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("${character.magic.spells.size} заклинаний", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+            if (largeText) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column {
+                        Text("Книга заклинаний", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${character.magic.spells.size} заклинаний", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = { createSpell = true }, modifier = Modifier.weight(1f)) { Text("Своё") }
+                        Button(onClick = { showCatalog = true }, modifier = Modifier.weight(1f)) { Text("Из книги") }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = { createSpell = true }) { Text("Своё") }
-                    Button(onClick = { showCatalog = true }) { Text("Из книги") }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Column {
+                        Text("Книга заклинаний", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${character.magic.spells.size} заклинаний", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = { createSpell = true }) { Text("Своё") }
+                        Button(onClick = { showCatalog = true }) { Text("Из книги") }
+                    }
                 }
             }
         }
@@ -174,11 +196,25 @@ fun MagicScreen(controller: CharacterController) {
                     Text(
                         if (character.magic.spells.isEmpty()) "Книга заклинаний пуста" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                     )
                     Text(
                         if (character.magic.spells.isEmpty()) "Добавьте заклинание из каталога или создайте своё." else "Измените поисковый запрос.",
                         color = DublMuted,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    if (character.magic.spells.isEmpty()) {
+                        Button(onClick = { showCatalog = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Открыть каталог")
+                        }
+                        OutlinedButton(onClick = { createSpell = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Создать своё заклинание")
+                        }
+                    } else {
+                        OutlinedButton(onClick = { spellQuery = "" }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Сбросить поиск")
+                        }
+                    }
                 }
             }
         } else {
@@ -202,7 +238,7 @@ fun MagicScreen(controller: CharacterController) {
             SpellDetailSheet(
                 spell = spell,
                 onEdit = { editSpell = spell; selectedSpellUid = null },
-                onRemove = { controller.removeSpell(uid); selectedSpellUid = null },
+                onRemove = { selectedSpellUid = null; pendingDeleteSpellUid = uid },
                 onToggleLearned = { learned -> controller.updateSpell(uid) { it.copy(learned = learned) } },
                 onDismiss = { selectedSpellUid = null },
             )
@@ -231,11 +267,16 @@ fun MagicScreen(controller: CharacterController) {
         SchoolEditDialog(
             initial = MagicSchool(),
             title = "Новая школа",
+            errorMessage = schoolError,
             onSave = { school ->
-                controller.addMagicSchool(school.name, school.rank, school.note)
-                createSchool = false
+                if (controller.addMagicSchool(school.name, school.rank, school.note)) {
+                    createSchool = false
+                    schoolError = null
+                } else {
+                    schoolError = "Школа с таким названием уже существует."
+                }
             },
-            onDismiss = { createSchool = false },
+            onDismiss = { createSchool = false; schoolError = null },
         )
     }
 
@@ -245,14 +286,63 @@ fun MagicScreen(controller: CharacterController) {
                 initial = school,
                 title = school.name,
                 showDelete = true,
+                errorMessage = schoolError,
                 onSave = { updated ->
-                    controller.updateMagicSchool(index, updated.name, updated.rank, updated.note)
-                    editSchoolIndex = null
+                    if (controller.updateMagicSchool(index, updated.name, updated.rank, updated.note)) {
+                        editSchoolIndex = null
+                        schoolError = null
+                    } else {
+                        schoolError = "Школа с таким названием уже существует."
+                    }
                 },
-                onDelete = { controller.removeMagicSchool(index); editSchoolIndex = null },
-                onDismiss = { editSchoolIndex = null },
+                onDelete = { editSchoolIndex = null; schoolError = null; pendingDeleteSchoolIndex = index },
+                onDismiss = { editSchoolIndex = null; schoolError = null },
             )
         } ?: run { editSchoolIndex = null }
+    }
+
+    pendingDeleteSpellUid?.let { uid ->
+        val spell = character.magic.spells.firstOrNull { it.uid == uid }
+        if (spell != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDeleteSpellUid = null },
+                title = { Text("Удалить заклинание?") },
+                text = { Text("«${spell.name}» будет удалено из книги заклинаний персонажа.") },
+                confirmButton = {
+                    Button(onClick = {
+                        controller.removeSpell(uid)
+                        pendingDeleteSpellUid = null
+                    }) { Text("Удалить") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteSpellUid = null }) { Text("Отмена") }
+                },
+            )
+        } else {
+            pendingDeleteSpellUid = null
+        }
+    }
+
+    pendingDeleteSchoolIndex?.let { index ->
+        val school = character.magic.schools.getOrNull(index)
+        if (school != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDeleteSchoolIndex = null },
+                title = { Text("Удалить школу?") },
+                text = { Text("Школа «${school.name}» будет удалена. Заклинания из книги останутся.") },
+                confirmButton = {
+                    Button(onClick = {
+                        controller.removeMagicSchool(index)
+                        pendingDeleteSchoolIndex = null
+                    }) { Text("Удалить") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteSchoolIndex = null }) { Text("Отмена") }
+                },
+            )
+        } else {
+            pendingDeleteSchoolIndex = null
+        }
     }
 }
 
@@ -272,24 +362,44 @@ private fun MagicCoreCard(
     DublCard(Modifier.fillMaxWidth()) {
         Text("Магический потенциал", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            MagicCounter(
-                title = "Ранг запаса",
-                value = manaRank,
-                modifier = Modifier.weight(1f),
-                onMinus = { onManaRank((manaRank - 1).coerceAtLeast(0)) },
-                onPlus = { onManaRank((manaRank + 1).coerceAtMost(5)) },
-            )
-            MagicCounter(
-                title = "Сила магии",
-                value = power,
-                modifier = Modifier.weight(1f),
-                onMinus = { onPower((power - 1).coerceAtLeast(0)) },
-                onPlus = { onPower(power + 1) },
-            )
+        val largeText = LocalDensity.current.fontScale >= 1.2f
+        if (largeText) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MagicCounter(
+                    title = "Ранг запаса",
+                    value = manaRank,
+                    modifier = Modifier.fillMaxWidth(),
+                    onMinus = { onManaRank((manaRank - 1).coerceAtLeast(0)) },
+                    onPlus = { onManaRank((manaRank + 1).coerceAtMost(5)) },
+                )
+                MagicCounter(
+                    title = "Сила магии",
+                    value = power,
+                    modifier = Modifier.fillMaxWidth(),
+                    onMinus = { onPower((power - 1).coerceAtLeast(0)) },
+                    onPlus = { onPower(power + 1) },
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MagicCounter(
+                    title = "Ранг запаса",
+                    value = manaRank,
+                    modifier = Modifier.weight(1f),
+                    onMinus = { onManaRank((manaRank - 1).coerceAtLeast(0)) },
+                    onPlus = { onManaRank((manaRank + 1).coerceAtMost(5)) },
+                )
+                MagicCounter(
+                    title = "Сила магии",
+                    value = power,
+                    modifier = Modifier.weight(1f),
+                    onMinus = { onPower((power - 1).coerceAtLeast(0)) },
+                    onPlus = { onPower(power + 1) },
+                )
+            }
         }
         Spacer(Modifier.height(12.dp))
         Surface(
@@ -358,8 +468,13 @@ private fun SchoolRow(school: MagicSchool, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(school.name, fontWeight = FontWeight.SemiBold)
-            if (school.note.isNotBlank()) Text(school.note, style = MaterialTheme.typography.bodySmall, color = DublMuted, maxLines = 1)
+            Text(
+                school.name,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (school.note.isNotBlank()) Text(school.note, style = MaterialTheme.typography.bodySmall, color = DublMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Surface(shape = RoundedCornerShape(999.dp), color = DublAccentSoft) {
             Text("ур. ${school.rank}", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = DublFocus)
@@ -378,7 +493,13 @@ private fun SpellRow(spell: KnownSpell, onClick: () -> Unit) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(spell.name, fontWeight = FontWeight.Bold)
+                    Text(
+                        spell.name,
+                        modifier = Modifier.weight(1f, fill = false),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (spell.custom) {
                         Spacer(Modifier.width(6.dp))
                         Text("СВОЁ", style = MaterialTheme.typography.labelSmall, color = DublGold)
@@ -392,7 +513,8 @@ private fun SpellRow(spell: KnownSpell, onClick: () -> Unit) {
                     ).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = DublMuted,
-                    maxLines = 1,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Surface(shape = RoundedCornerShape(999.dp), color = DublMana.copy(alpha = 0.12f)) {
@@ -426,7 +548,7 @@ private fun SpellCatalogSheet(
                 .padding(horizontal = 16.dp),
         ) {
             Text("Каталог заклинаний", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("${entries.size} записей из desktop-каталога", color = DublMuted)
+            Text("${entries.size} заклинаний в каталоге", color = DublMuted)
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Поиск") }, singleLine = true)
             Spacer(Modifier.height(8.dp))
@@ -435,6 +557,27 @@ private fun SpellCatalogSheet(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
+                if (filtered.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text("Ничего не найдено", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Попробуйте другой запрос.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DublMuted,
+                            )
+                            if (query.isNotBlank()) {
+                                TextButton(onClick = { query = "" }) { Text("Сбросить поиск") }
+                            }
+                        }
+                    }
+                }
                 items(filtered, key = { it.id }) { entry ->
                     val owned = entry.id in ownedIds
                     Surface(
@@ -447,8 +590,19 @@ private fun SpellCatalogSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(entry.name, fontWeight = FontWeight.SemiBold)
-                                Text("${entry.school.ifBlank { "Без школы" }} · ${entry.cost} маны", style = MaterialTheme.typography.bodySmall, color = DublMuted)
+                                Text(
+                                    entry.name,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    "${entry.school.ifBlank { "Без школы" }} · ${entry.cost} маны",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = DublMuted,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                             TextButton(onClick = { onAdd(entry) }, enabled = !owned && !entry.incomplete) {
                                 Text(if (owned) "Есть" else if (entry.incomplete) "Черновик" else "+")
@@ -515,9 +669,16 @@ private fun SpellDetailSheet(
 @Composable
 private fun DetailFact(label: String, value: String) {
     if (value.isBlank()) return
-    Row(Modifier.fillMaxWidth()) {
-        Text(label, modifier = Modifier.width(92.dp), style = MaterialTheme.typography.labelMedium, color = DublMuted)
-        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+    if (LocalDensity.current.fontScale >= 1.2f) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = DublMuted)
+            Text(value, style = MaterialTheme.typography.bodyMedium)
+        }
+    } else {
+        Row(Modifier.fillMaxWidth()) {
+            Text(label, modifier = Modifier.width(92.dp), style = MaterialTheme.typography.labelMedium, color = DublMuted)
+            Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
@@ -608,6 +769,7 @@ private fun SchoolEditDialog(
     initial: MagicSchool,
     title: String,
     showDelete: Boolean = false,
+    errorMessage: String? = null,
     onSave: (MagicSchool) -> Unit,
     onDelete: () -> Unit = {},
     onDismiss: () -> Unit,
@@ -623,6 +785,13 @@ private fun SchoolEditDialog(
                 OutlinedTextField(name, { name = it }, label = { Text("Название") }, singleLine = true)
                 OutlinedTextField(rankText, { rankText = it.filter(Char::isDigit) }, label = { Text("Уровень") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 OutlinedTextField(note, { note = it }, label = { Text("Заметки") }, minLines = 2)
+                if (!errorMessage.isNullOrBlank()) {
+                    Text(
+                        errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         confirmButton = {

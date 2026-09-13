@@ -1,12 +1,20 @@
-# Architecture — 0.1.3
+# Architecture — 0.2
 
-The native branch deliberately keeps the first migration small and inspectable.
+The Android app is a native Kotlin + Jetpack Compose client with rules logic kept outside composables.
 
-- `model/` contains pure DUBL domain data and derived formulas. It has no Android dependencies.
-- `data/` contains local Android persistence.
-- `state/` is the application state/controller layer used by Compose.
+- `model/` contains pure DUBL domain data and deterministic formulas. It has no Android dependencies.
+- `model/SkillModels.kt` owns the skill catalog, rank XP costs, skill resolution, and skill calculations.
+- `model/DevelopmentModels.kt` owns skills/abilities, prerequisites, branch access, ability-point budgeting, and requirement validation.
+- `model/MagicEquipmentModels.kt` owns mana, spell-learning, equipment load/capacity, and burden rules.
+- `model/RollRules.kt` owns the tested dice engine for normal rolls, advantages/hindrances, doubles, criticals, and follow-up dice.
+- `data/` contains local persistence and catalog readers.
+- `state/CharacterController.kt` is the UI-facing mutation layer for core character data; character-sheet UI extras remain in their dedicated repository.
 - `ui/` contains Compose screens, reusable components, and theme.
 
-Persistence is currently a compact JSON snapshot stored in private SharedPreferences. This is adequate for the current small local model and avoids pulling database complexity into the migration. If inventory, spells, and the full skill catalog make the model relational or large, migrate persistence to Room without moving rule formulas into the database layer.
+Persistence is a compact JSON snapshot stored in private SharedPreferences. Schema 4 contains skills, development, magic, and equipment while remaining backward compatible with older snapshots where those fields are absent.
 
-The UI must consume calculated values from the model rather than duplicating DUBL formulas in composables.
+Large reference catalogs are packaged as local assets so the app works offline. Character saves store only selected/owned character data, not duplicate copies of every catalog entry.
+
+Cross-system formulas belong in the model. Examples include equipment burden affecting Defense/Reflexes/Run, magic state satisfying development prerequisites, and skill calculations using one selected attribute when several alternatives are allowed.
+
+Compose screens must consume model results rather than reproducing rules formulas locally.

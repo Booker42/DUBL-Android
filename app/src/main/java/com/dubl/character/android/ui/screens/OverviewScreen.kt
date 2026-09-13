@@ -79,6 +79,11 @@ import com.dubl.character.android.model.CharacterConditionId
 import com.dubl.character.android.model.CharacterSheetResourceId
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.ResolvedSkill
+import com.dubl.character.android.model.RollFollowUp
+import com.dubl.character.android.model.RollMode
+import com.dubl.character.android.model.RollResult
+import com.dubl.character.android.model.rollCheck
+import com.dubl.character.android.model.rollFollowUp
 import com.dubl.character.android.model.resolveSkill
 import com.dubl.character.android.model.resolvedSkills
 import com.dubl.character.android.model.skillCalculation
@@ -93,7 +98,6 @@ import com.dubl.character.android.ui.theme.DublMana
 import com.dubl.character.android.ui.theme.DublStamina
 import java.text.DecimalFormat
 import kotlin.math.abs
-import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -113,25 +117,6 @@ private enum class StatId(val title: String, val glyph: String) {
     SIZE("Размер", "◇"),
 }
 
-private enum class RollMode(val title: String) {
-    NORMAL("Обычный"),
-    ADVANTAGE("Преимущество"),
-    HINDRANCE("Помеха"),
-}
-
-private enum class RollFollowUp(val buttonTitle: String) {
-    ADVANTAGE_DIE("Бросить кость преимущества"),
-    CRITICAL_FAILURE_CONFIRMATION("Бросить кость подтверждения"),
-    SUPERIORITY_DIE("Бросить кость превосходства"),
-}
-
-private enum class RollSpecialResult(val title: String) {
-    CRITICAL_FAILURE("Критический провал"),
-    CONFIRMED_CRITICAL_FAILURE("Подтверждённый критический провал"),
-    CRITICAL_SUCCESS("Критический успех"),
-    CONFIRMED_CRITICAL_SUCCESS("Подтверждённый критический успех"),
-}
-
 private sealed interface UndoAction {
     data class Resource(val resource: CharacterResource, val appliedDelta: Int) : UndoAction
     data class Attribute(val id: AttributeId, val appliedDelta: Int) : UndoAction
@@ -147,23 +132,6 @@ private data class RecentChange(
     val accent: Color,
     val undo: UndoAction? = null,
     val token: Long = System.nanoTime(),
-)
-
-private data class RollResult(
-    val mode: RollMode,
-    val effectCount: Int,
-    val dice: List<Int>,
-    val chosenIndices: Set<Int>,
-    val checkBonus: Int,
-    val checkBonusLabel: String,
-    val situationalBonus: Int,
-    val total: Int,
-    val note: String? = null,
-    val followUp: RollFollowUp? = null,
-    val followUpDie: Int? = null,
-    val resolvedFollowUp: RollFollowUp? = null,
-    val specialResult: RollSpecialResult? = null,
-    val grantedAdvantageDie: Boolean = false,
 )
 
 private data class StatInfo(
@@ -2300,121 +2268,6 @@ private fun DiceChip(value: Int, selected: Boolean) {
             color = if (selected) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-private fun rollCheck(
-    mode: RollMode,
-    effectCount: Int,
-    checkBonus: Int,
-    checkBonusLabel: String,
-    situationalBonus: Int,
-): RollResult {
-    val extraDice = effectCount.coerceAtLeast(0)
-    val dice = List(2 + extraDice) { Random.nextInt(1, 7) }
-    val chosenIndices = chooseDiceIndices(mode, dice)
-    val chosenValues = chosenIndices.map { dice[it] }
-    val pair = chosenValues.sorted()
-    val hasExtraDice = dice.size > 2
-    val ambiguitySuffix = if (hasExtraDice) {
-        " При дополнительных костях книга не закрепляет, определяется ли дубль до или после выбора двух костей."
-    } else {
-        ""
-    }
-    val (followUp, note) = when {
-        pair == listOf(1, 1) -> RollFollowUp.CRITICAL_FAILURE_CONFIRMATION to
-            "Критический провал. Дополнительная кость определяет, будет ли он подтверждён.$ambiguitySuffix"
-        pair == listOf(6, 6) -> RollFollowUp.SUPERIORITY_DIE to
-            "Критический успех. Кость превосходства бросается дополнительно и прибавляется к результату.$ambiguitySuffix"
-        pair.size == 2 && pair[0] == pair[1] -> RollFollowUp.ADVANTAGE_DIE to
-            "Дубль ${pair[0]}–${pair[1]}. По правилам доступна дополнительная кость преимущества.$ambiguitySuffix"
-        else -> null to null
-    }
-    val specialResult = when (pair) {
-        listOf(1, 1) -> RollSpecialResult.CRITICAL_FAILURE
-        listOf(6, 6) -> RollSpecialResult.CRITICAL_SUCCESS
-        else -> null
-    }
-    return RollResult(
-        mode = mode,
-        effectCount = extraDice,
-        dice = dice,
-        chosenIndices = chosenIndices,
-        checkBonus = checkBonus,
-        checkBonusLabel = checkBonusLabel,
-        situationalBonus = situationalBonus,
-        total = chosenValues.sum() + checkBonus + situationalBonus,
-        note = note,
-        followUp = followUp,
-        specialResult = specialResult,
-    )
-}
-
-private fun rollFollowUp(roll: RollResult): RollResult {
-    val action = roll.followUp ?: return roll
-    val die = Random.nextInt(1, 7)
-    return when (action) {
-        RollFollowUp.ADVANTAGE_DIE -> {
-            val newDice = roll.dice + die
-            val newChosen = chooseDiceIndices(
-                mode = roll.mode,
-                dice = newDice,
-                grantedAdvantageForNormal = roll.mode == RollMode.NORMAL,
-            )
-            val newTotal = newChosen.sumOf { newDice[it] } + roll.checkBonus + roll.situationalBonus
-            roll.copy(
-                dice = newDice,
-                chosenIndices = newChosen,
-                total = newTotal,
-                note = "Кость преимущества за дубль: $die. Результат пересчитан по правилам текущего броска.",
-                followUp = null,
-                followUpDie = die,
-                resolvedFollowUp = action,
-                grantedAdvantageDie = true,
-            )
-        }
-        RollFollowUp.CRITICAL_FAILURE_CONFIRMATION -> roll.copy(
-            note = if (die == 1) {
-                "Выпала ещё одна 1 — критический провал подтверждён."
-            } else {
-                "Дополнительная кость показала $die. Критический провал остаётся, но не подтверждается."
-            },
-            followUp = null,
-            followUpDie = die,
-            resolvedFollowUp = action,
-            specialResult = if (die == 1) {
-                RollSpecialResult.CONFIRMED_CRITICAL_FAILURE
-            } else {
-                RollSpecialResult.CRITICAL_FAILURE
-            },
-        )
-        RollFollowUp.SUPERIORITY_DIE -> roll.copy(
-            total = roll.total + die,
-            note = if (die == 6) {
-                "Кость превосходства показала 6 — критический успех подтверждён."
-            } else {
-                "Кость превосходства показала $die и добавлена к итоговому результату."
-            },
-            followUp = null,
-            followUpDie = die,
-            resolvedFollowUp = action,
-            specialResult = if (die == 6) {
-                RollSpecialResult.CONFIRMED_CRITICAL_SUCCESS
-            } else {
-                RollSpecialResult.CRITICAL_SUCCESS
-            },
-        )
-    }
-}
-
-private fun chooseDiceIndices(
-    mode: RollMode,
-    dice: List<Int>,
-    grantedAdvantageForNormal: Boolean = false,
-): Set<Int> = when {
-    mode == RollMode.HINDRANCE -> dice.indices.sortedBy { dice[it] }.take(2).toSet()
-    mode == RollMode.ADVANTAGE || grantedAdvantageForNormal ->
-        dice.indices.sortedByDescending { dice[it] }.take(2).toSet()
-    else -> setOf(0, 1)
 }
 
 private fun rollSetupText(

@@ -116,16 +116,25 @@ class CharacterController(private val repository: CharacterRepository) {
         return true
     }
 
-    fun updateMagicSchool(index: Int, name: String, rank: Int, note: String) = updateActive { character ->
-        if (index !in character.magic.schools.indices) return@updateActive character
-        val next = character.magic.schools.toMutableList()
-        next[index] = next[index].copy(
-            name = name.trim().ifBlank { next[index].name },
-            rank = rank.coerceAtLeast(0),
-            note = note.trim(),
-        )
-        character.copy(magic = character.magic.copy(schools = next))
+    fun updateMagicSchool(index: Int, name: String, rank: Int, note: String): Boolean {
+        val clean = name.trim().replace(Regex("\\s+"), " ")
+        if (clean.isBlank() || index !in active.magic.schools.indices) return false
+        if (active.magic.schools.withIndex().any { (otherIndex, school) ->
+                otherIndex != index && school.name.equals(clean, ignoreCase = true)
+            }) return false
+        updateActive { character ->
+            if (index !in character.magic.schools.indices) return@updateActive character
+            val next = character.magic.schools.toMutableList()
+            next[index] = next[index].copy(
+                name = clean,
+                rank = rank.coerceAtLeast(0),
+                note = note.trim(),
+            )
+            character.copy(magic = character.magic.copy(schools = next))
+        }
+        return true
     }
+
 
     fun removeMagicSchool(index: Int) = updateActive { character ->
         if (index !in character.magic.schools.indices) return@updateActive character
@@ -190,10 +199,34 @@ class CharacterController(private val repository: CharacterRepository) {
         character.copy(gear = character.gear.copy(loadManual = value.coerceAtLeast(0.0)))
     }
 
+    fun syncCatalogGearLoads(entries: List<GearCatalogEntry>) {
+        val byId = entries.associateBy { it.id }
+        val current = active
+        val repaired = current.gear.items.map { item ->
+            val catalogEntry = item.catalogId?.let(byId::get) ?: return@map item
+            val expected = MagicEquipmentRules.catalogGearLoad(catalogEntry)
+            val legacyRequirementLoad = (catalogEntry.fields["Треб."] ?: catalogEntry.fields["Требование"] ?: "0")
+                .replace(',', '.')
+                .toDoubleOrNull()
+                ?.coerceAtLeast(0.0)
+                ?: 0.0
+            val isLegacyCatalogValue = kotlin.math.abs(item.load - legacyRequirementLoad) < 0.0001
+            if (!isLegacyCatalogValue || kotlin.math.abs(item.load - expected) < 0.0001) item
+            else item.copy(load = expected)
+        }
+        if (repaired == current.gear.items) return
+        updateActive { character -> character.copy(gear = character.gear.copy(items = repaired)) }
+    }
+
     fun addCatalogGear(entry: GearCatalogEntry): String {
+        val existing = active.gear.items.firstOrNull { it.catalogId == entry.id }
+        if (existing != null) {
+            updateGearItem(existing.uid) { item -> item.copy(quantity = item.quantity + 1) }
+            return existing.uid
+        }
+
         val uid = UUID.randomUUID().toString()
-        val requirement = entry.fields["Треб."] ?: entry.fields["Требование"] ?: "0"
-        val load = requirement.replace(',', '.').toDoubleOrNull() ?: 0.0
+        val load = MagicEquipmentRules.catalogGearLoad(entry)
         val item = GearItem(
             uid = uid,
             catalogId = entry.id,

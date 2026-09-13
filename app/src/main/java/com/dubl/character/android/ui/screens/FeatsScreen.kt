@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.DevelopmentCatalogRepository
@@ -211,11 +212,21 @@ fun FeatsScreen(controller: CharacterController) {
         if (filteredEntries.isEmpty()) {
             item {
                 DublCard(Modifier.fillMaxWidth()) {
-                    Text("Ничего не найдено", style = MaterialTheme.typography.titleMedium)
+                    Text("Ничего не найдено", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
                         "Сбросьте поиск или фильтры.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = {
+                            query = ""
+                            typeFilter = DevelopmentFilter.ALL
+                            availableOnly = false
+                            ownedOnly = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Сбросить фильтры") }
                 }
             }
         } else {
@@ -401,6 +412,8 @@ private fun DevelopmentRow(
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -422,14 +435,16 @@ private fun DevelopmentRow(
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (entry.accessId != null) {
                     Text(
                         "Ветка: ${entry.category}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

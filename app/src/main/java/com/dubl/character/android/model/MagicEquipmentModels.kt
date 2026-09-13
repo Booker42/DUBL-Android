@@ -152,6 +152,15 @@ object MagicEquipmentRules {
 
     fun manaRankXp(character: DublCharacter): Int = character.magic.manaRank.coerceIn(0, 5) * 100
 
+
+    fun catalogGearLoad(entry: GearCatalogEntry): Double {
+        val raw = entry.fields["Вес"]
+            ?: entry.fields["Вес, кг"]
+            ?: return 0.0
+        val match = Regex("""\d+(?:[.,]\d+)?""").find(raw) ?: return 0.0
+        return match.value.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+    }
+
     fun equipmentLoad(character: DublCharacter): Double {
         if (!character.gear.loadAutomatic) return character.gear.loadManual.coerceAtLeast(0.0)
         return character.gear.items

@@ -115,7 +115,7 @@ private fun DublBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(68.dp)
+                    .height(74.dp)
                     .padding(horizontal = 4.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -125,7 +125,7 @@ private fun DublBottomBar(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .height(58.dp)
+                            .height(64.dp)
                             .clickable { onSelected(section) },
                         shape = RoundedCornerShape(13.dp),
                         color = if (active) DublAccentSoft.copy(alpha = 0.92f) else DublSurfaceInset,
@@ -167,10 +167,10 @@ private fun DublNavIcon(
     section: AppSection,
     color: Color,
 ) {
-    Canvas(modifier = Modifier.size(26.dp)) {
+    Canvas(modifier = Modifier.size(30.dp)) {
         val w = size.width
         val h = size.height
-        val stroke = 1.9.dp.toPx()
+        val stroke = 2.1.dp.toPx()
         val cap = StrokeCap.Round
 
         when (section) {

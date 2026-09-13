@@ -147,7 +147,7 @@ data class DublCharacter(
             items = gear.items.map { item ->
                 item.copy(
                     name = item.name.trim().ifBlank { "Предмет" },
-                    quantity = item.quantity.coerceAtLeast(0),
+                    quantity = item.quantity.coerceAtLeast(1),
                     load = item.load.coerceAtLeast(0.0),
                 )
             }.distinctBy { it.uid },

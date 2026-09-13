@@ -8,7 +8,7 @@ The development application ID is `com.dubl.character.android.dev`. Its signing 
 
 ## Production APK
 
-`android-release.yml` runs only for tags matching `vX.Y.Z`.
+`android-release.yml` accepts both `vX.Y` and `vX.Y.Z` tags.
 
 The tag determines `versionName`. `versionCode` is deterministically encoded as:
 
@@ -18,8 +18,8 @@ major * 1,000,000 + minor * 1,000 + patch
 
 Examples:
 
-- `0.1.3` -> `1003`
-- `0.2.0` -> `2000`
+- `0.2` -> `2000`
+- `0.2.1` -> `2001`
 - `1.0.0` -> `1000000`
 
 Release signing requires these GitHub Actions secrets:

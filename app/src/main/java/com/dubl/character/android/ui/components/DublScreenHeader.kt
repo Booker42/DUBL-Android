@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dubl.character.android.ui.theme.DublAccentStrong
 import com.dubl.character.android.ui.theme.DublMuted
@@ -51,7 +52,8 @@ fun DublScreenHeader(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = DublMuted,
-                    maxLines = 1,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

@@ -75,4 +75,35 @@ class MagicEquipmentRulesTest {
         assertTrue(rules.requirements(entry).all { it.status == RequirementStatus.OK })
         assertTrue(rules.availability(entry).canIncrease)
     }
+    @Test
+    fun catalogGearLoadUsesWeightInsteadOfRequirement() {
+        val entry = GearCatalogEntry(
+            id = "bow",
+            name = "Лук",
+            category = "Снаряжение",
+            section = "Оружие",
+            fields = mapOf("Треб." to "4", "Вес" to "0,6 кг"),
+            description = "",
+        )
+        assertEquals(0.6, MagicEquipmentRules.catalogGearLoad(entry), 0.001)
+    }
+
+    @Test
+    fun catalogGearLoadParsesDesktopWeightVariantsAndMissingWeight() {
+        fun entry(weightKey: String? = null, weight: String = "") = GearCatalogEntry(
+            id = weight,
+            name = "Тест",
+            category = "Снаряжение",
+            section = "Тест",
+            fields = if (weightKey == null) emptyMap() else mapOf(weightKey to weight),
+            description = "",
+        )
+
+        assertEquals(2.5, MagicEquipmentRules.catalogGearLoad(entry("Вес", "2,5 кг")), 0.001)
+        assertEquals(20.0, MagicEquipmentRules.catalogGearLoad(entry("Вес, кг", "от 20")), 0.001)
+        assertEquals(0.5, MagicEquipmentRules.catalogGearLoad(entry("Вес", "0.5-1 кг")), 0.001)
+        assertEquals(0.0, MagicEquipmentRules.catalogGearLoad(entry()), 0.001)
+    }
+
+
 }

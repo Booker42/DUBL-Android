@@ -1,72 +1,69 @@
 # DUBL Android
 
-Standalone native Android companion for DUBL. This repository is intentionally separate from the Windows/Linux desktop app while Android has its own `0.1.x` development line.
+Standalone native Android companion for DUBL. Android remains a separate repository and release line from the Windows/Linux desktop app.
 
 ## Current version
 
-**0.1.3** — native Kotlin + Jetpack Compose rebuild, API 36.
+**0.2** — integrated character sheet, skills, development, magic, and equipment on Kotlin + Jetpack Compose, API 36.
 
-## The easy workflow
+## What 0.2 includes
 
-You do **not** need to compile APKs locally for normal testing.
+- Character dashboard with resources, conditions, derived-stat breakdowns, favorite skill checks, and quick rolls.
+- Full native skills workflow with rank XP costs, custom/specialized skills, hiding/restoring, favorites, and multi-attribute choices.
+- Native development catalog with skills/abilities, prerequisites, branch access, ranks, ability-point budgeting, and requirement validation.
+- Native magic with mana progression, power, schools, spellbook, learning XP, custom spells, and the desktop spell catalog.
+- Native equipment with the desktop catalog, quantities, carried state, custom items, load, capacity, and burden penalties wired into the character sheet.
+- Shared local persistence for all of those systems with backward-compatible loading of older Android snapshots.
+- Stable roll engine for normal rolls, multiple advantages/hindrances, situational modifiers, doubles, critical failure confirmation, and superiority dice.
+- Mobile UI polish for long names, larger font scales, empty states, destructive-action confirmation, and the compact six-section bottom navigation.
 
-### Every push
+## Everyday Git workflow
 
-GitHub Actions automatically:
+No project helper command is required.
 
-1. sets up Java, Android SDK 36 and Gradle;
-2. runs unit tests;
-3. builds `DUBL-Android-dev.apk`;
-4. exposes it under **Actions → Android CI → Artifacts**.
+After ChatGPT changes the project and you have checked the build on your device:
 
-The development package is `com.dubl.character.android.dev`, so it is separate from release installs. A stable public debug key is committed only for this `.dev` package, allowing one CI build to update the previous one.
-
-### Releases
-
-A tag such as `v0.1.3` automatically builds a signed production APK and creates a GitHub Release containing:
-
-```text
-DUBL-Android-0.1.3.apk
+```bash
+git status
+git add -A
+git commit -m "android: describe the update"
+git push
 ```
 
-Release signing uses GitHub Actions secrets. The private release key is never committed.
+GitHub Actions automatically tests the project and builds `DUBL-Android-dev.apk` for every push to `main`.
 
-## One-time GitHub setup
+The development package is `com.dubl.character.android.dev`, so it installs next to the production app and uses the stable repository debug key.
 
-From this directory:
+## Release
+
+For the 0.2 release:
+
+```bash
+git status
+git tag -a v0.2 -m "DUBL Android 0.2"
+git push origin v0.2
+```
+
+The tag triggers the signed production release workflow and creates:
+
+```text
+DUBL-Android-0.2.apk
+```
+
+Release signing uses GitHub Actions secrets. The private production key is never committed.
+
+## One-time repository setup
+
+If this is a fresh clone/repository:
 
 ```bash
 git init -b main
 git add .
-git commit -m "android: start native 0.1.3"
+git commit -m "android: start native app"
 gh repo create DUBL-Android --public --source=. --remote=origin --push
 ```
 
-Then configure release signing once:
-
-```bash
-./tools/setup-signing
-```
-
-Back up `.private/dubl-android-release.jks` and `.private/signing.env` somewhere safe. They are ignored by Git.
-
-Optionally install the small helper command:
-
-```bash
-./tools/dubl-android install
-```
-
-Then everyday use is just:
-
-```bash
-dubl-android push "android: skills screen work"
-```
-
-To publish a release:
-
-```bash
-dubl-android release 0.1.3
-```
+Release signing can be configured once with `tools/setup-signing`. That script only provisions the release key/secrets; it is not part of the day-to-day Git workflow.
 
 ## Native stack
 
@@ -79,9 +76,9 @@ dubl-android release 0.1.3
 - no WebView
 - no requested Android permissions
 
-## Local build (optional)
+## Local build
 
-Local Android Studio builds still work. If the Gradle wrapper JAR has not been generated yet, run:
+If the Gradle wrapper JAR has not been generated yet, run:
 
 ```bash
 ./bootstrap-wrapper.sh
@@ -90,7 +87,7 @@ Local Android Studio builds still work. If the Gradle wrapper JAR has not been g
 Then:
 
 ```bash
-./gradlew assembleDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-But for routine APK testing, GitHub Actions is the intended path.
+For routine testing, the GitHub Actions development APK is also available under **Actions → Android CI → Artifacts**.
