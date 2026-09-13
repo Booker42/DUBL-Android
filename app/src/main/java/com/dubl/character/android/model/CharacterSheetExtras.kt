@@ -109,4 +109,5 @@ data class CharacterSheetExtras(
     val activeConditions: Set<CharacterConditionId> = emptySet(),
     val favoriteSkillIds: List<String> = emptyList(),
     val hiddenResourceIds: Set<CharacterSheetResourceId> = emptySet(),
+    val preferredSkillAttributes: Map<String, AttributeId> = emptyMap(),
 )

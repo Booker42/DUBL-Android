@@ -1,6 +1,7 @@
 package com.dubl.character.android.data
 
 import android.content.Context
+import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterConditionId
 import com.dubl.character.android.model.CharacterSheetExtras
 import com.dubl.character.android.model.CharacterSheetResourceId
@@ -24,12 +25,25 @@ class CharacterSheetExtrasRepository(context: Context) {
         val hiddenResourceIds = prefs.getStringSet("${prefix}hidden_resources", emptySet()).orEmpty()
             .mapNotNull { raw -> CharacterSheetResourceId.entries.firstOrNull { it.name == raw } }
             .toSet()
+        val preferredSkillAttributes = prefs
+            .getStringSet("${prefix}preferred_skill_attributes", emptySet())
+            .orEmpty()
+            .mapNotNull { raw ->
+                val separatorIndex = raw.lastIndexOf(PREFERRED_ATTRIBUTE_SEPARATOR)
+                if (separatorIndex <= 0) return@mapNotNull null
+                val skillId = raw.substring(0, separatorIndex)
+                val attributeName = raw.substring(separatorIndex + PREFERRED_ATTRIBUTE_SEPARATOR.length)
+                val attribute = AttributeId.entries.firstOrNull { it.name == attributeName } ?: return@mapNotNull null
+                skillId to attribute
+            }
+            .toMap()
 
         return CharacterSheetExtras(
             portraitUri = portraitUri,
             activeConditions = conditions,
             favoriteSkillIds = favoriteSkillIds,
             hiddenResourceIds = hiddenResourceIds,
+            preferredSkillAttributes = preferredSkillAttributes,
         )
     }
 
@@ -40,6 +54,12 @@ class CharacterSheetExtrasRepository(context: Context) {
             .putStringSet("${prefix}conditions", extras.activeConditions.map { it.name }.toSet())
             .putString("${prefix}favorite_skill_ids", extras.favoriteSkillIds.joinToString(FAVORITE_SEPARATOR))
             .putStringSet("${prefix}hidden_resources", extras.hiddenResourceIds.map { it.name }.toSet())
+            .putStringSet(
+                "${prefix}preferred_skill_attributes",
+                extras.preferredSkillAttributes.map { (skillId, attribute) ->
+                    "$skillId$PREFERRED_ATTRIBUTE_SEPARATOR${attribute.name}"
+                }.toSet(),
+            )
             .remove("${prefix}favorites") // v4 pre-skill favorites were stats/attributes and are intentionally discarded.
             .apply()
     }
@@ -48,5 +68,6 @@ class CharacterSheetExtrasRepository(context: Context) {
 
     private companion object {
         const val FAVORITE_SEPARATOR = "|"
+        const val PREFERRED_ATTRIBUTE_SEPARATOR = "::"
     }
 }

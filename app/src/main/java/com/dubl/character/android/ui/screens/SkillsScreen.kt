@@ -1,19 +1,24 @@
 package com.dubl.character.android.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -24,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,30 +39,64 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.dubl.character.android.data.CharacterSheetExtrasRepository
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.ResolvedSkill
+import com.dubl.character.android.model.SkillCalculation
 import com.dubl.character.android.model.SkillCatalog
 import com.dubl.character.android.model.SkillCategory
 import com.dubl.character.android.model.UntrainedRule
 import com.dubl.character.android.model.resolveSkill
 import com.dubl.character.android.model.resolvedSkills
-import com.dubl.character.android.model.skillCalculation
+import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.model.skillXpSpent
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
+import com.dubl.character.android.ui.theme.DublAccent
+import com.dubl.character.android.ui.theme.DublGold
 
 @Composable
 fun SkillsScreen(controller: CharacterController) {
     val character = controller.active
+    val context = LocalContext.current
+    val extrasRepository = remember(context.applicationContext) {
+        CharacterSheetExtrasRepository(context.applicationContext)
+    }
+    var sheetExtras by remember(character.id) {
+        mutableStateOf(extrasRepository.load(character.id))
+    }
+
     var query by remember(character.id) { mutableStateOf("") }
     var selectedCategory by remember(character.id) { mutableStateOf<SkillCategory?>(null) }
     var trainedOnly by remember(character.id) { mutableStateOf(false) }
     var selectedSkillId by remember(character.id) { mutableStateOf<String?>(null) }
+    var selectedRollSkillId by remember(character.id) { mutableStateOf<String?>(null) }
+    var selectedBreakdownSkillId by remember(character.id) { mutableStateOf<String?>(null) }
+    var selectedRankSkillId by remember(character.id) { mutableStateOf<String?>(null) }
     var showAdd by remember(character.id) { mutableStateOf(false) }
     var showHidden by remember(character.id) { mutableStateOf(false) }
+
+    fun toggleFavorite(skillId: String) {
+        val current = sheetExtras.favoriteSkillIds
+        val next = if (skillId in current) current - skillId else current + skillId
+        val updated = sheetExtras.copy(favoriteSkillIds = next.distinct())
+        sheetExtras = updated
+        extrasRepository.save(character.id, updated)
+    }
+
+    fun rememberSkillAttribute(skillId: String, attribute: AttributeId) {
+        val updated = sheetExtras.copy(
+            preferredSkillAttributes = sheetExtras.preferredSkillAttributes + (skillId to attribute),
+        )
+        sheetExtras = updated
+        extrasRepository.save(character.id, updated)
+    }
 
     val visibleSkills = character.resolvedSkills()
     val filtered = visibleSkills.filter { skill ->
@@ -70,17 +110,18 @@ fun SkillsScreen(controller: CharacterController) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+        contentPadding = PaddingValues(bottom = 20.dp),
     ) {
-        item { Spacer(Modifier.height(6.dp)) }
+        item { Spacer(Modifier.height(5.dp)) }
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("Умения", style = MaterialTheme.typography.headlineMedium)
                     Text(
                         character.name,
@@ -93,17 +134,29 @@ fun SkillsScreen(controller: CharacterController) {
         }
 
         item {
-            DublCard(Modifier.fillMaxWidth()) {
-                val trained = character.resolvedSkills(includeHidden = true).count { it.rank > 0 }
-                Text(
-                    "Изучено $trained • XP в умения ${character.skillXpSpent()}",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    "Ранг 0–10 • итог = выбранные характеристики + ранг + поправка",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(11.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val trained = character.resolvedSkills(includeHidden = true).count { it.rank > 0 }
+                    Text(
+                        "Изучено $trained",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "XP в умения ${character.skillXpSpent()}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = DublGold,
+                    )
+                }
             }
         }
 
@@ -118,7 +171,7 @@ fun SkillsScreen(controller: CharacterController) {
         }
 
         item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 item {
                     FilterChip(
                         selected = selectedCategory == null,
@@ -147,8 +200,33 @@ fun SkillsScreen(controller: CharacterController) {
 
         if (character.hiddenSkillIds.isNotEmpty()) {
             item {
-                TextButton(onClick = { showHidden = true }) {
-                    Text("Скрытые умения: ${character.hiddenSkillIds.size}")
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showHidden = true },
+                    shape = RoundedCornerShape(9.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.38f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Скрытые умения · ${character.hiddenSkillIds.size}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                "Они не удалены — их можно вернуть",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text("›", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
@@ -170,32 +248,75 @@ fun SkillsScreen(controller: CharacterController) {
                     item(key = "header-${category.name}") {
                         Text(
                             category.title,
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(top = 6.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 7.dp, bottom = 1.dp),
                         )
                     }
                     items(categorySkills, key = { it.id }) { skill ->
-                        SkillCard(
+                        SkillRow(
                             character = character,
                             skill = skill,
+                            isFavorite = skill.id in sheetExtras.favoriteSkillIds,
                             onClick = { selectedSkillId = skill.id },
+                            onFavorite = { toggleFavorite(skill.id) },
+                            onRoll = { selectedRollSkillId = skill.id },
+                            onBreakdown = { selectedBreakdownSkillId = skill.id },
+                            onRank = { selectedRankSkillId = skill.id },
                         )
                     }
                 }
             }
         }
-
-        item { Spacer(Modifier.height(18.dp)) }
     }
 
-    val selected = selectedSkillId?.let { character.resolveSkill(it) }
-    if (selected != null) {
-        SkillDetailSheet(
-            character = character,
-            skill = selected,
-            controller = controller,
-            onDismiss = { selectedSkillId = null },
-        )
+    selectedSkillId?.let { skillId ->
+        character.resolveSkill(skillId)?.let { skill ->
+            SkillDetailSheet(
+                character = character,
+                skill = skill,
+                controller = controller,
+                isFavorite = skill.id in sheetExtras.favoriteSkillIds,
+                onFavorite = { toggleFavorite(skill.id) },
+                onRoll = {
+                    selectedSkillId = null
+                    selectedRollSkillId = skill.id
+                },
+                onDismiss = { selectedSkillId = null },
+            )
+        } ?: run { selectedSkillId = null }
+    }
+
+    selectedRollSkillId?.let { skillId ->
+        character.resolveSkill(skillId)?.let { skill ->
+            DublSkillRollSheet(
+                character = character,
+                skill = skill,
+                preferredAttribute = sheetExtras.preferredSkillAttributes[skill.id],
+                onPreferredAttribute = { attribute -> rememberSkillAttribute(skill.id, attribute) },
+                onDismiss = { selectedRollSkillId = null },
+            )
+        } ?: run { selectedRollSkillId = null }
+    }
+
+    selectedBreakdownSkillId?.let { skillId ->
+        character.resolveSkill(skillId)?.let { skill ->
+            SkillBreakdownSheet(
+                character = character,
+                skill = skill,
+                onDismiss = { selectedBreakdownSkillId = null },
+            )
+        } ?: run { selectedBreakdownSkillId = null }
+    }
+
+    selectedRankSkillId?.let { skillId ->
+        character.resolveSkill(skillId)?.let { skill ->
+            SkillRankSheet(
+                skill = skill,
+                controller = controller,
+                onDismiss = { selectedRankSkillId = null },
+            )
+        } ?: run { selectedRankSkillId = null }
     }
 
     if (showAdd) {
@@ -219,51 +340,336 @@ fun SkillsScreen(controller: CharacterController) {
 }
 
 @Composable
-private fun SkillCard(
+private fun SkillRow(
     character: DublCharacter,
     skill: ResolvedSkill,
+    isFavorite: Boolean,
     onClick: () -> Unit,
+    onFavorite: () -> Unit,
+    onRoll: () -> Unit,
+    onBreakdown: () -> Unit,
+    onRank: () -> Unit,
 ) {
-    val calculation = character.skillCalculation(skill)
-    DublCard(
+    val calculations = character.skillCalculationOptions(skill)
+    val trained = skill.rank > 0
+    val border = if (trained) DublGold.copy(alpha = 0.34f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)
+    val container = if (trained) DublGold.copy(alpha = 0.035f) else MaterialTheme.colorScheme.surface
+    val primaryText = if (trained) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+    val nextCost = SkillCatalog.nextRankCost(skill.rank)
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
+        shape = RoundedCornerShape(11.dp),
+        color = container,
+        border = BorderStroke(if (trained) 1.2.dp else 1.dp, border),
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            skill.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = primaryText,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        skillOriginLabel(skill)?.let { origin ->
+                            Spacer(Modifier.width(6.dp))
+                            CompactBadge(origin, if (origin == "Своё") DublAccent else DublGold)
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Text(
+                            skill.attributes.joinToString(" / ") { it.shortTitle },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (trained) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (skillHasRule(skill)) {
+                            CompactBadge("◇ Правило", DublAccent)
+                        }
+                        if (skill.modifier != 0) {
+                            CompactBadge("Поправка ${signedSkill(skill.modifier)}", DublGold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.width(8.dp))
+                MiniSkillAction(
+                    text = if (isFavorite) "★" else "☆",
+                    selected = isFavorite,
+                    accent = DublGold,
+                    onClick = onFavorite,
+                )
+                Spacer(Modifier.width(5.dp))
+                MiniSkillAction(
+                    text = "⚄",
+                    selected = true,
+                    accent = DublAccent,
+                    onClick = onRoll,
+                )
+            }
+
+            Spacer(Modifier.height(7.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                DenseInfoChip(
+                    text = if (trained) "Ранг ${skill.rank}" else "Ранг 0 · не изучено",
+                    accent = if (trained) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                    onClick = onRank,
+                )
+                DenseInfoChip(
+                    text = skillBonusSummary(calculations),
+                    accent = if (calculations.any { it.second.total != null }) DublAccent else MaterialTheme.colorScheme.error,
+                    onClick = onBreakdown,
+                )
+                Text(
+                    text = nextCost?.let { "→ ${skill.rank + 1}: $it XP" } ?: "Макс. ранг",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniSkillAction(
+    text: String,
+    selected: Boolean,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .size(34.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(9.dp),
+        color = accent.copy(alpha = if (selected) 0.14f else 0.045f),
+        border = BorderStroke(1.dp, accent.copy(alpha = if (selected) 0.48f else 0.26f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(skill.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    skill.attributes.joinToString(" + ") { it.shortTitle },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text("Ранг ${skill.rank}", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    calculation.total?.let { if (it >= 0) "+$it" else it.toString() } ?: "—",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-            }
-        }
-        if (skill.description.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
             Text(
-                skill.description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                text,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (calculation.unavailableReason.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            Text(calculation.unavailableReason, color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun DenseInfoChip(
+    text: String,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(7.dp),
+        color = accent.copy(alpha = 0.075f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = accent,
+        )
+    }
+}
+
+@Composable
+private fun CompactBadge(
+    text: String,
+    accent: androidx.compose.ui.graphics.Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = accent.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.24f)),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = accent,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun skillOriginLabel(skill: ResolvedSkill): String? = when {
+    !skill.isDynamic -> null
+    skill.state.definitionId != null && skill.definition?.template == true -> "Специализация"
+    else -> "Своё"
+}
+
+private fun skillHasRule(skill: ResolvedSkill): Boolean {
+    if (skill.formulaNote.isNotBlank() || skill.modifier != 0) return true
+    val definition = skill.definition ?: return skill.untrained != UntrainedRule.YES
+    return skill.untrained != UntrainedRule.YES ||
+        definition.auto6 != "Нет" ||
+        definition.auto12 != "Нет"
+}
+
+private fun skillBonusSummary(options: List<Pair<AttributeId, SkillCalculation>>): String {
+    if (options.isEmpty()) return "Бонус —"
+    if (options.size == 1) return "Бонус ${options.first().second.total?.let(::signedSkill) ?: "—"}"
+    val values = options.joinToString(" / ") { (_, calculation) ->
+        calculation.total?.let(::signedSkill) ?: "—"
+    }
+    return "Бонус $values"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillBreakdownSheet(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    onDismiss: () -> Unit,
+) {
+    val options = character.skillCalculationOptions(skill)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(skill.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "Разбор бонуса",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (skill.attributes.size > 1) {
+                Text(
+                    "У умения несколько допустимых характеристик. При броске выбирается одна — они не складываются.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            options.forEach { (attribute, calculation) ->
+                DublCard(Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(attribute.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                calculationBreakdown(calculation),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            calculation.total?.let(::signedSkill) ?: "—",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (calculation.total != null) DublGold else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (calculation.unavailableReason.isNotBlank()) {
+                        Spacer(Modifier.height(5.dp))
+                        Text(calculation.unavailableReason, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            if (skill.formulaNote.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = DublAccent.copy(alpha = 0.07f),
+                    border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.3f)),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("◇ Особое правило / условный бонус", fontWeight = FontWeight.Bold, color = DublAccent)
+                        Spacer(Modifier.height(3.dp))
+                        Text(skill.formulaNote, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillRankSheet(
+    skill: ResolvedSkill,
+    controller: CharacterController,
+    onDismiss: () -> Unit,
+) {
+    val nextCost = SkillCatalog.nextRankCost(skill.rank)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(skill.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text("Ранг", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(skill.rank.toString(), fontSize = 42.sp, lineHeight = 46.sp, fontWeight = FontWeight.Bold, color = DublGold)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Потрачено XP: ${SkillCatalog.costForRank(skill.rank)}",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                nextCost?.let { "Следующий ранг ${skill.rank + 1}: +$it XP" } ?: "Достигнут максимальный ранг",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (nextCost != null) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { controller.changeSkillRank(skill.id, -1) },
+                    enabled = skill.rank > 0,
+                    modifier = Modifier.weight(1f),
+                ) { Text("− 1 ранг") }
+                Button(
+                    onClick = { controller.changeSkillRank(skill.id, 1) },
+                    enabled = skill.rank < 10,
+                    modifier = Modifier.weight(1f),
+                ) { Text("+ 1 ранг") }
+            }
         }
     }
 }
@@ -274,10 +680,14 @@ private fun SkillDetailSheet(
     character: DublCharacter,
     skill: ResolvedSkill,
     controller: CharacterController,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
+    onRoll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var note by remember(skill.id, skill.formulaNote) { mutableStateOf(skill.formulaNote) }
-    val calculation = character.skillCalculation(skill)
+    val calculations = character.skillCalculationOptions(skill)
+    val nextCost = SkillCatalog.nextRankCost(skill.rank)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -285,11 +695,37 @@ private fun SkillDetailSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp),
         ) {
-            Text(skill.name, style = MaterialTheme.typography.headlineSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(skill.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    skillOriginLabel(skill)?.let { origin ->
+                        Spacer(Modifier.height(4.dp))
+                        CompactBadge(origin, if (origin == "Своё") DublAccent else DublGold)
+                    }
+                }
+                MiniSkillAction(
+                    text = if (isFavorite) "★" else "☆",
+                    selected = isFavorite,
+                    accent = DublGold,
+                    onClick = onFavorite,
+                )
+            }
+
             if (skill.description.isNotBlank()) {
                 Text(skill.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Button(
+                onClick = onRoll,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 11.dp),
+            ) {
+                Text("⚄  Бросить проверку")
             }
 
             DublCard(Modifier.fillMaxWidth()) {
@@ -300,7 +736,7 @@ private fun SkillDetailSheet(
                 ) {
                     Column {
                         Text("Ранг", style = MaterialTheme.typography.labelLarge)
-                        Text(skill.rank.toString(), style = MaterialTheme.typography.headlineMedium)
+                        Text(skill.rank.toString(), style = MaterialTheme.typography.headlineMedium, color = if (skill.rank > 0) DublGold else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
@@ -313,16 +749,31 @@ private fun SkillDetailSheet(
                         ) { Text("+") }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(7.dp))
                 Text(
-                    "Потрачено XP: ${SkillCatalog.costForRank(skill.rank)}" +
-                        (SkillCatalog.nextRankCost(skill.rank)?.let { " • следующий ранг +$it XP" } ?: " • максимум"),
+                    "Потрачено XP: ${SkillCatalog.costForRank(skill.rank)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    nextCost?.let { "Следующий ранг ${skill.rank + 1}: +$it XP" } ?: "Максимальный ранг",
+                    color = if (nextCost != null) DublGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
 
-            Text("Характеристики", style = MaterialTheme.typography.titleMedium)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Допустимые характеристики", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    if (skill.attributes.size > 1) {
+                        "При броске выбирается одна из отмеченных характеристик. Они не складываются."
+                    } else {
+                        "Можно добавить альтернативную характеристику для ситуационных проверок."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(AttributeId.entries) { attribute ->
                     val selected = attribute in skill.attributes
                     FilterChip(
@@ -340,24 +791,43 @@ private fun SkillDetailSheet(
                 }
             }
 
-            DublCard(Modifier.fillMaxWidth()) {
-                Text("Итог", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    calculation.total?.let { if (it >= 0) "+$it" else it.toString() } ?: "—",
-                    style = MaterialTheme.typography.headlineMedium,
-                )
-                Text(
-                    calculation.formulaText(skill),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Text("Бонус проверки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            calculations.forEach { (attribute, calculation) ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = DublGold.copy(alpha = 0.045f),
+                    border = BorderStroke(1.dp, DublGold.copy(alpha = 0.25f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(attribute.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                            Text(
+                                calculationBreakdown(calculation),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            calculation.total?.let(::signedSkill) ?: "—",
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (calculation.total != null) DublGold else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
             }
 
-            Text("Поправка", style = MaterialTheme.typography.titleMedium)
+            Text("Постоянная поправка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = { controller.setSkillModifier(skill.id, skill.modifier - 1) }) { Text("−") }
                 Text(
-                    if (skill.modifier >= 0) "+${skill.modifier}" else skill.modifier.toString(),
+                    signedSkill(skill.modifier),
                     style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
                 )
                 OutlinedButton(onClick = { controller.setSkillModifier(skill.id, skill.modifier + 1) }) { Text("+") }
             }
@@ -366,18 +836,32 @@ private fun SkillDetailSheet(
                 value = note,
                 onValueChange = { note = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Примечание к расчёту") },
+                label = { Text("Особое правило / условный бонус") },
+                supportingText = { Text("Например: +2 с подходящими инструментами или особое условие применения") },
                 minLines = 2,
             )
             Button(
                 onClick = { controller.setSkillFormulaNote(skill.id, note) },
                 enabled = note.trim() != skill.formulaNote,
-            ) { Text("Сохранить примечание") }
+            ) { Text("Сохранить правило") }
 
             HorizontalDivider()
             Text("Без обучения: ${skill.untrained.label}")
             skill.definition?.let { definition ->
                 Text("Автоуспех 6: ${definition.auto6} • Автоуспех 12: ${definition.auto12}")
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+            ) {
+                Text(
+                    "Скрытие убирает умение из основного списка, но не удаляет его данные.",
+                    modifier = Modifier.padding(10.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Row(
@@ -390,7 +874,7 @@ private fun SkillDetailSheet(
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("Скрыть") }
+                ) { Text("Скрыть из списка") }
                 if (skill.isDynamic) {
                     TextButton(
                         onClick = {
@@ -474,7 +958,12 @@ private fun AddSkillDialog(
                         label = { Text("Описание") },
                         minLines = 2,
                     )
-                    Text("Характеристики", style = MaterialTheme.typography.titleMedium)
+                    Text("Допустимые характеристики", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Если отмечено несколько, при броске выбирается одна характеристика.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(AttributeId.entries) { attribute ->
                             val selected = attribute in customAttrs
@@ -538,17 +1027,38 @@ private fun HiddenSkillsDialog(
         title = { Text("Скрытые умения") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .heightIn(max = 500.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                Text(
+                    "Скрытие не удаляет ранги, настройки и описание умения.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(3.dp))
                 hidden.forEach { skill ->
-                    Row(
+                    Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
                     ) {
-                        Text(skill.name, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { controller.restoreSkill(skill.id) }) { Text("Вернуть") }
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(skill.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Ранг ${skill.rank}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(onClick = { controller.restoreSkill(skill.id) }) { Text("Вернуть") }
+                        }
                     }
                 }
             }
@@ -564,3 +1074,10 @@ private fun HiddenSkillsDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
     )
 }
+
+private fun calculationBreakdown(calculation: SkillCalculation): String =
+    calculation.contributions.joinToString(" + ") { contribution ->
+        "${contribution.label} ${signedSkill(contribution.value)}"
+    }
+
+private fun signedSkill(value: Int): String = if (value >= 0) "+$value" else value.toString()

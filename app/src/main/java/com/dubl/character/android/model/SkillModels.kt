@@ -75,10 +75,18 @@ data class SkillCalculation(
     val total: Int?,
     val contributions: List<SkillContribution>,
     val unavailableReason: String = "",
+    val selectedAttribute: AttributeId? = null,
 ) {
     fun formulaText(skill: ResolvedSkill): String = buildString {
-        append("Характеристики: ")
-        append(skill.attributes.joinToString(" + ") { it.title })
+        if (skill.attributes.size > 1) {
+            append("Характеристика: ")
+            append(selectedAttribute?.title ?: skill.attributes.first().title)
+            append('\n').append("Варианты: ")
+            append(skill.attributes.joinToString(" / ") { it.title })
+        } else {
+            append("Характеристика: ")
+            append(selectedAttribute?.title ?: skill.attributes.first().title)
+        }
         if (unavailableReason.isNotBlank()) {
             append('\n').append(unavailableReason)
         }
@@ -91,7 +99,7 @@ data class SkillCalculation(
             if (total != null) append(" = ${if (total >= 0) "+" else ""}$total")
         }
         if (skill.formulaNote.isNotBlank()) {
-            append('\n').append("Примечание: ").append(skill.formulaNote)
+            append('\n').append("Особое правило: ").append(skill.formulaNote)
         }
     }
 }
@@ -187,14 +195,18 @@ fun DublCharacter.resolveSkill(skillId: String): ResolvedSkill? {
     return ResolvedSkill(skillId, SkillCatalog.definition(state.definitionId), state)
 }
 
-fun DublCharacter.skillCalculation(skill: ResolvedSkill): SkillCalculation {
+fun DublCharacter.skillCalculation(
+    skill: ResolvedSkill,
+    attribute: AttributeId? = null,
+): SkillCalculation {
+    val selectedAttribute = attribute
+        ?.takeIf { it in skill.attributes }
+        ?: skill.attributes.first()
+
     val contributions = mutableListOf<SkillContribution>()
-    var total = 0
-    skill.attributes.forEach { attributeId ->
-        val value = attribute(attributeId)
-        total += value
-        contributions += SkillContribution(attributeId.title, value)
-    }
+    var total = attribute(selectedAttribute)
+    contributions += SkillContribution(selectedAttribute.title, total)
+
     total += skill.rank
     contributions += SkillContribution("Ранг", skill.rank)
 
@@ -209,6 +221,7 @@ fun DublCharacter.skillCalculation(skill: ResolvedSkill): SkillCalculation {
                 total = null,
                 contributions = contributions,
                 unavailableReason = "Нельзя использовать без обучения",
+                selectedAttribute = selectedAttribute,
             )
         }
         val penalty = skill.untrained.penalty ?: 0
@@ -218,8 +231,17 @@ fun DublCharacter.skillCalculation(skill: ResolvedSkill): SkillCalculation {
         }
     }
 
-    return SkillCalculation(total = total, contributions = contributions)
+    return SkillCalculation(
+        total = total,
+        contributions = contributions,
+        selectedAttribute = selectedAttribute,
+    )
 }
+
+fun DublCharacter.skillCalculationOptions(skill: ResolvedSkill): List<Pair<AttributeId, SkillCalculation>> =
+    skill.attributes.map { attribute ->
+        attribute to skillCalculation(skill, attribute)
+    }
 
 fun DublCharacter.skillXpSpent(): Int = resolvedSkills(includeHidden = true)
     .sumOf { SkillCatalog.costForRank(it.rank) }

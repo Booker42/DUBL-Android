@@ -37,6 +37,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -79,6 +80,7 @@ import com.dubl.character.android.model.ResolvedSkill
 import com.dubl.character.android.model.resolveSkill
 import com.dubl.character.android.model.resolvedSkills
 import com.dubl.character.android.model.skillCalculation
+import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.theme.DublAccent
@@ -473,9 +475,17 @@ fun OverviewScreen(controller: CharacterController) {
 
     selectedSkillId?.let { skillId ->
         character.resolveSkill(skillId)?.let { skill ->
-            SkillRollSheet(
+            DublSkillRollSheet(
                 character = character,
                 skill = skill,
+                preferredAttribute = sheetExtras.preferredSkillAttributes[skill.id],
+                onPreferredAttribute = { attribute ->
+                    val updated = sheetExtras.copy(
+                        preferredSkillAttributes = sheetExtras.preferredSkillAttributes + (skill.id to attribute),
+                    )
+                    sheetExtras = updated
+                    extrasRepository.save(character.id, updated)
+                },
                 onDismiss = { selectedSkillId = null },
             )
         } ?: run { selectedSkillId = null }
@@ -1456,7 +1466,14 @@ private fun FavoriteSkillTile(
     skill: ResolvedSkill,
     onClick: () -> Unit,
 ) {
-    val calculation = character.skillCalculation(skill)
+    val calculations = character.skillCalculationOptions(skill)
+    val bonusText = if (calculations.size == 1) {
+        calculations.first().second.total?.let(::signed) ?: "—"
+    } else {
+        calculations.joinToString(" / ") { (attribute, calculation) ->
+            "${attribute.shortTitle} ${calculation.total?.let(::signed) ?: "—"}"
+        }
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1480,7 +1497,7 @@ private fun FavoriteSkillTile(
                 verticalAlignment = Alignment.Bottom,
             ) {
                 Text(
-                    text = skill.attributes.joinToString(" + ") { it.title },
+                    text = skill.attributes.joinToString(" / ") { it.title },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1488,8 +1505,8 @@ private fun FavoriteSkillTile(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = calculation.total?.let(::signed) ?: "—",
-                    fontSize = 22.sp,
+                    text = bonusText,
+                    fontSize = if (calculations.size > 1) 15.sp else 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = DublGold,
                 )
@@ -1823,7 +1840,14 @@ private fun FavoriteSkillPickerRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
-    val calculation = character.skillCalculation(skill)
+    val calculations = character.skillCalculationOptions(skill)
+    val bonusText = if (calculations.size == 1) {
+        calculations.first().second.total?.let(::signed) ?: "—"
+    } else {
+        calculations.joinToString(" / ") { (attribute, calculation) ->
+            "${attribute.shortTitle} ${calculation.total?.let(::signed) ?: "—"}"
+        }
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(9.dp),
@@ -1848,7 +1872,7 @@ private fun FavoriteSkillPickerRow(
             ) {
                 Text(skill.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = "Бонус ${calculation.total?.let(::signed) ?: "—"} · Ранг ${skill.rank}",
+                    text = "Бонус $bonusText · Ранг ${skill.rank}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1862,18 +1886,29 @@ private fun FavoriteSkillPickerRow(
 }
 
 @Composable
-private fun SkillRollSheet(
+internal fun DublSkillRollSheet(
     character: DublCharacter,
     skill: ResolvedSkill,
+    preferredAttribute: AttributeId? = null,
+    onPreferredAttribute: ((AttributeId) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
-    val calculation = character.skillCalculation(skill)
+    var selectedAttribute by remember(skill.id, skill.attributes, preferredAttribute) {
+        mutableStateOf(preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.first())
+    }
+    val calculation = character.skillCalculation(skill, selectedAttribute)
     CheckRollSheet(
         title = skill.name,
         bonusTitle = "Бонус умения",
         checkBonus = calculation.total,
         formulaText = calculation.formulaText(skill),
         rememberKey = skill.id,
+        attributeOptions = skill.attributes,
+        selectedAttribute = selectedAttribute,
+        onAttributeSelected = {
+            selectedAttribute = it
+            onPreferredAttribute?.invoke(it)
+        },
         onDismiss = onDismiss,
     )
 }
@@ -1886,6 +1921,9 @@ private fun CheckRollSheet(
     checkBonus: Int?,
     formulaText: String,
     rememberKey: Any,
+    attributeOptions: List<AttributeId> = emptyList(),
+    selectedAttribute: AttributeId? = null,
+    onAttributeSelected: ((AttributeId) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     var advantageCount by remember(rememberKey) { mutableStateOf(0) }
@@ -1931,6 +1969,28 @@ private fun CheckRollSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            if (attributeOptions.size > 1 && onAttributeSelected != null) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Характеристика для броска",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(attributeOptions, key = { it.name }) { attribute ->
+                        FilterChip(
+                            selected = selectedAttribute == attribute,
+                            onClick = {
+                                onAttributeSelected(attribute)
+                                invalidateResult()
+                            },
+                            label = { Text(attribute.title) },
+                        )
+                    }
+                }
+            }
 
             if (checkBonus != null) {
                 Spacer(Modifier.height(16.dp))
