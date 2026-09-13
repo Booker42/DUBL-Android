@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2.1 — Bottom-sheet gesture and toggle visibility hotfix
+
+- Restored normal drag gestures for modal bottom sheets.
+- Contained scroll overshoot inside long sheet content so reaching the end of a list no longer hands uncontrolled drag momentum to the parent sheet.
+- Added a shared high-contrast switch style with a clearly visible light thumb in the off state and readable disabled states.
+- Added release-tag/versionCode support for four-part hotfix versions such as `v0.3.2.1`.
+- Bumped the default Android version to `0.3.2.1`.
+
 ## 0.3.2 — Compact development sheet and interaction polish
 
 - Grouped acquired development on the Character sheet into ordinary and special sections.

@@ -47,7 +47,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,7 +100,9 @@ import com.dubl.character.android.model.resolvedSkills
 import com.dubl.character.android.model.skillCalculation
 import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
+import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublAccentSoft
 import com.dubl.character.android.ui.theme.DublDanger
@@ -1697,13 +1698,13 @@ private fun OwnedDevelopmentDetailSheet(
     val checks = rules.requirements(entry)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 690.dp)
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, bottom = 26.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1864,12 +1865,12 @@ private fun ConditionPickerSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .padding(start = 18.dp, end = 18.dp, bottom = 22.dp),
         ) {
             Text("Состояния", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -1945,12 +1946,12 @@ private fun ConditionDetailSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
@@ -2004,12 +2005,12 @@ private fun FavoriteSkillsSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .padding(start = 18.dp, end = 18.dp, bottom = 22.dp),
         ) {
             Text("Избранные проверки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -2198,12 +2199,12 @@ private fun CheckRollSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
@@ -2616,7 +2617,6 @@ private fun ResourceVisibilitySheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2700,7 +2700,7 @@ private fun ResourceVisibilityRow(
                 Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Switch(
+        DublSwitch(
             checked = visible,
             onCheckedChange = { onToggle() },
             enabled = enabled,
@@ -2724,7 +2724,6 @@ private fun StatInfoSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2844,7 +2843,6 @@ private fun ResourceAdjustSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2906,7 +2904,6 @@ private fun AttributeAdjustSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2985,7 +2982,6 @@ private fun HealthControlSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -3069,7 +3065,7 @@ private fun CustomResourceControlSheet(
     onEdit: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -3173,7 +3169,6 @@ private fun TextValueEditSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -3237,13 +3232,13 @@ private fun ExperienceEconomySheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 720.dp)
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -3423,7 +3418,7 @@ private fun EditCharacterDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Использовать ману")
-                    Switch(checked = manaEnabled, onCheckedChange = { manaEnabled = it })
+                    DublSwitch(checked = manaEnabled, onCheckedChange = { manaEnabled = it })
                 }
                 Text(
                     "Максимумы здоровья, выносливости и маны меняются прямо из карточек ресурсов.",

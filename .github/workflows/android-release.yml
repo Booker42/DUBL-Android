@@ -38,13 +38,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "Tag must look like v0.2 or v0.2.1" >&2
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(\.[0-9]+)?$ ]]; then
+            echo "Tag must look like v0.3, v0.3.2, or v0.3.2.1" >&2
             exit 1
           fi
-          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          IFS=. read -r MAJOR MINOR PATCH HOTFIX <<< "$VERSION"
           PATCH="${PATCH:-0}"
-          VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
+          HOTFIX="${HOTFIX:-0}"
+          VERSION_CODE=$((10#$MAJOR * 100000000 + 10#$MINOR * 1000000 + 10#$PATCH * 1000 + 10#$HOTFIX))
           echo "DUBL_VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
           echo "DUBL_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
 

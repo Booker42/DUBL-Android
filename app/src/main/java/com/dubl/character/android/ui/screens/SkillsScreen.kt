@@ -58,6 +58,7 @@ import com.dubl.character.android.model.resolvedSkills
 import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.model.skillXpSpent
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublScreenHeader
 import com.dubl.character.android.ui.theme.DublAccent
@@ -587,13 +588,13 @@ private fun SkillBreakdownSheet(
     val options = character.skillCalculationOptions(skill)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -667,7 +668,6 @@ private fun SkillRankSheet(
     val nextCost = SkillCatalog.nextRankCost(skill.rank)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -725,11 +725,12 @@ private fun SkillDetailSheet(
     val calculations = character.skillCalculationOptions(skill)
     val nextCost = SkillCatalog.nextRankCost(skill.rank)
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(13.dp),
         ) {

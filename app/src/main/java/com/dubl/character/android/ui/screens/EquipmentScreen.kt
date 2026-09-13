@@ -28,7 +28,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,8 +49,10 @@ import com.dubl.character.android.model.GearCatalogEntry
 import com.dubl.character.android.model.GearItem
 import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublScreenHeader
+import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublDanger
 import com.dubl.character.android.ui.theme.DublFocus
 import com.dubl.character.android.ui.theme.DublGold
@@ -300,7 +301,7 @@ private fun LoadCard(
                 Text("Считать по предметам", fontWeight = FontWeight.Medium)
                 Text("Вместимость = Сила + Телосложение", style = MaterialTheme.typography.bodySmall, color = DublMuted)
             }
-            Switch(checked = automatic, onCheckedChange = onAutomatic)
+            DublSwitch(checked = automatic, onCheckedChange = onAutomatic)
         }
         if (!automatic) {
             Spacer(Modifier.height(6.dp))
@@ -376,11 +377,12 @@ private fun GearCatalogSheet(
                 .joinToString(" ").lowercase().contains(needle)
         }.sortedBy { it.name.lowercase() }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 720.dp)
+                .containSheetOverscroll()
                 .padding(horizontal = 16.dp),
         ) {
             Text("Каталог снаряжения", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -468,10 +470,11 @@ private fun GearDetailSheet(
     onQuantity: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -489,7 +492,7 @@ private fun GearDetailSheet(
                     Text("На персонаже")
                     Text("Учитывается в автоматической нагрузке", style = MaterialTheme.typography.bodySmall, color = DublMuted)
                 }
-                Switch(item.carried, onToggleCarried)
+                DublSwitch(item.carried, onToggleCarried)
             }
             Text("Нагрузка одного: ${formatNumber(item.load)}", color = DublMuted)
             if (item.fields.isNotEmpty()) {
@@ -547,7 +550,7 @@ private fun GearEditDialog(
                 OutlinedTextField(loadText, { loadText = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.replace(',', '.') }, label = { Text("Нагрузка одного предмета") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("На персонаже", modifier = Modifier.weight(1f))
-                    Switch(carried, { carried = it })
+                    DublSwitch(carried, { carried = it })
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Свойства и описание") }, minLines = 4)
             }

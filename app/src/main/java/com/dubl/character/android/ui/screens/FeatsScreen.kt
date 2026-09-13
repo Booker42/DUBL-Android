@@ -56,6 +56,7 @@ import com.dubl.character.android.model.RequirementCheck
 import com.dubl.character.android.model.RequirementStatus
 import com.dubl.character.android.model.developmentNormalize
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublScreenHeader
 import com.dubl.character.android.ui.theme.DublAccent
@@ -879,13 +880,13 @@ private fun DevelopmentDetailSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 690.dp)
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, bottom = 26.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),

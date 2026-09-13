@@ -29,7 +29,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,8 +52,10 @@ import com.dubl.character.android.model.MagicSchoolCatalog
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.SpellCatalogEntry
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublScreenHeader
+import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublAccentSoft
 import com.dubl.character.android.ui.theme.DublFocus
 import com.dubl.character.android.ui.theme.DublGold
@@ -133,7 +134,7 @@ fun MagicScreen(controller: CharacterController) {
                         Text("Скрыть неизученные школы", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text("Показывать только школы с Силой магии 1+", style = MaterialTheme.typography.labelSmall, color = DublMuted)
                     }
-                    Switch(checked = hideUnlearnedSchools, onCheckedChange = { hideUnlearnedSchools = it })
+                    DublSwitch(checked = hideUnlearnedSchools, onCheckedChange = { hideUnlearnedSchools = it })
                 }
                 Spacer(Modifier.height(6.dp))
                 val visibleSchools = MagicEquipmentRules.visibleMagicSchools(character, hideUnlearnedSchools)
@@ -590,11 +591,12 @@ private fun SpellCatalogSheet(
             matchesQuery && matchesSchool
         }.sortedWith(compareBy<SpellCatalogEntry> { MagicSchoolCatalog.parseSchools(it.school).minOfOrNull(MagicSchoolCatalog::sortIndex) ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 720.dp)
+                .containSheetOverscroll()
                 .padding(horizontal = 16.dp),
         ) {
             Text("Каталог заклинаний", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -692,10 +694,11 @@ private fun SpellDetailSheet(
     onToggleLearned: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .containSheetOverscroll()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -734,7 +737,7 @@ private fun SpellDetailSheet(
             Text("Цена изучения: ${xp?.let { "$it опыта" } ?: "не определена"}", style = MaterialTheme.typography.bodySmall, color = DublMuted)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Изучено", modifier = Modifier.weight(1f))
-                Switch(checked = spell.learned, onCheckedChange = onToggleLearned)
+                DublSwitch(checked = spell.learned, onCheckedChange = onToggleLearned)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onRemove, modifier = Modifier.weight(1f)) { Text("Удалить") }
@@ -802,11 +805,11 @@ private fun SpellEditDialog(
                 OutlinedTextField(enhancement, { enhancement = it }, label = { Text("Усиление") }, minLines = 2)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Изучено", modifier = Modifier.weight(1f))
-                    Switch(learned, { learned = it })
+                    DublSwitch(learned, { learned = it })
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Цена опыта вручную", modifier = Modifier.weight(1f))
-                    Switch(manualXp, { manualXp = it })
+                    DublSwitch(manualXp, { manualXp = it })
                 }
                 if (manualXp) {
                     OutlinedTextField(xpText, { xpText = it.filter(Char::isDigit) }, label = { Text("Опыт за изучение") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
