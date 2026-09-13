@@ -38,9 +38,10 @@ jobs:
         with:
           gradle-version: "9.6.0"
           cache-provider: basic
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       - name: Test and build development APK
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assemblePreview
+        run: gradle --no-daemon --configuration-cache :app:testDebugUnitTest :app:assemblePreview
 
       - name: Prepare APK
         run: |
