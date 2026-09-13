@@ -222,4 +222,20 @@ class MagicEquipmentRulesTest {
         assertEquals(2, MagicEquipmentRules.manaMaximum(character))
     }
 
+    @Test
+    fun visibleMagicSchoolsCanHideUnlearnedSchools() {
+        val character = DublCharacter(
+            id = "visible-schools",
+            magic = CharacterMagic(
+                schools = listOf(
+                    MagicSchool("Разрушение", 4),
+                    MagicSchool("Ограждение", 0),
+                )
+            )
+        )
+
+        assertEquals(MagicSchoolCatalog.schools, MagicEquipmentRules.visibleMagicSchools(character, hideUnlearned = false))
+        assertEquals(listOf("Разрушение"), MagicEquipmentRules.visibleMagicSchools(character, hideUnlearned = true))
+    }
+
 }

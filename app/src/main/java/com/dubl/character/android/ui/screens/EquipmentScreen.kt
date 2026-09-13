@@ -376,7 +376,7 @@ private fun GearCatalogSheet(
                 .joinToString(" ").lowercase().contains(needle)
         }.sortedBy { it.name.lowercase() }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -417,6 +417,7 @@ private fun GearCatalogSheet(
                 items(filtered, key = { it.id }) { entry ->
                     val ownedQuantity = ownedQuantities[entry.id] ?: 0
                     Surface(
+                        onClick = { onAdd(entry) },
                         shape = RoundedCornerShape(13.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
@@ -443,7 +444,12 @@ private fun GearCatalogSheet(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            TextButton(onClick = { onAdd(entry) }) { Text(if (ownedQuantity > 0) "+1" else "+") }
+                            Text(
+                                if (ownedQuantity > 0) "+1" else "Добавить",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = DublGold,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }
@@ -462,7 +468,7 @@ private fun GearDetailSheet(
     onQuantity: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

@@ -84,6 +84,8 @@ import com.dubl.character.android.model.CharacterSheetResourceId
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.CustomResource
 import com.dubl.character.android.model.DevelopmentCatalog
+import com.dubl.character.android.model.DevelopmentEntry
+import com.dubl.character.android.model.DevelopmentSheetSectionType
 import com.dubl.character.android.model.DevelopmentProgress
 import com.dubl.character.android.model.DevelopmentRules
 import com.dubl.character.android.model.RequirementStatus
@@ -181,6 +183,7 @@ fun OverviewScreen(controller: CharacterController) {
     var selectedCondition by remember { mutableStateOf<CharacterConditionId?>(null) }
     var showFavoritePicker by remember { mutableStateOf(false) }
     var selectedSkillId by remember { mutableStateOf<String?>(null) }
+    var selectedDevelopmentId by remember(character.id) { mutableStateOf<String?>(null) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
     var selectedCustomResourceId by remember(character.id) { mutableStateOf<String?>(null) }
     var editCustomResourceId by remember(character.id) { mutableStateOf<String?>(null) }
@@ -343,6 +346,7 @@ fun OverviewScreen(controller: CharacterController) {
                 OwnedDevelopmentSection(
                     character = character,
                     catalog = developmentCatalog,
+                    onEntryClick = { selectedDevelopmentId = it.id },
                 )
             }
         }
@@ -514,6 +518,17 @@ fun OverviewScreen(controller: CharacterController) {
                 onDismiss = { selectedSkillId = null },
             )
         } ?: run { selectedSkillId = null }
+    }
+
+    selectedDevelopmentId?.let { entryId ->
+        developmentCatalog.byId(entryId)?.let { entry ->
+            OwnedDevelopmentDetailSheet(
+                entry = entry,
+                character = character,
+                catalog = developmentCatalog,
+                onDismiss = { selectedDevelopmentId = null },
+            )
+        } ?: run { selectedDevelopmentId = null }
     }
 
     if (showFortitudeRoll) {
@@ -1597,35 +1612,148 @@ private fun FavoriteSkillTile(
 private fun OwnedDevelopmentSection(
     character: DublCharacter,
     catalog: DevelopmentCatalog,
+    onEntryClick: (DevelopmentEntry) -> Unit,
 ) {
-    val owned = character.development.mapNotNull { (id, value) ->
-        catalog.byId(id)?.takeIf { value.rank > 0 }?.let { Triple(it, value.rank, value.optionIndex) }
-    }.sortedBy { it.first.name.lowercase() }
-    if (owned.isEmpty()) return
     val rules = DevelopmentRules(character, catalog, DevelopmentProgress(character.development))
+    val sections = rules.ownedSheetSections()
+    if (sections.isEmpty()) return
+
     Column {
-        SectionTitle("Взятые навыки", trailing = "${owned.size}")
-        Spacer(Modifier.height(8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            owned.forEach { (entry, rank, _) ->
-                val invalid = rules.requirements(entry).any { it.status != RequirementStatus.OK }
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, if (invalid) DublDanger.copy(alpha = 0.7f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(entry.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 2)
-                            if (entry.maxRank > 1) Text("Ранг $rank", style = MaterialTheme.typography.labelMedium, color = DublGold)
+        SectionTitle("Взятые навыки", trailing = "${sections.sumOf { it.items.size }}")
+        Spacer(Modifier.height(6.dp))
+        sections.forEachIndexed { sectionIndex, section ->
+            if (sectionIndex > 0) Spacer(Modifier.height(8.dp))
+            Text(
+                text = when (section.type) {
+                    DevelopmentSheetSectionType.REGULAR -> "Обычные"
+                    DevelopmentSheetSectionType.SPECIAL -> "Спец. навыки"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = DublGold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                section.items.forEachIndexed { index, item ->
+                    if (item.depth == 0 && index > 0) Spacer(Modifier.height(3.dp))
+                    val invalid = rules.requirements(item.entry).any { it.status != RequirementStatus.OK }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = (item.depth * 12).dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onEntryClick(item.entry) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (item.depth == 0) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (invalid) DublDanger.copy(alpha = 0.65f)
+                            else if (item.depth > 0) DublGold.copy(alpha = 0.22f)
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                item.entry.name,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (item.depth == 0) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "Ранг ${item.rank}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (invalid) DublDanger else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        if (entry.benefit.isNotBlank()) {
-                            Text(entry.benefit, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
-                        }
-                        if (invalid) Text("⚠ Требования не выполнены", style = MaterialTheme.typography.labelSmall, color = DublDanger)
                     }
                 }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Тап по навыку — подробности",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OwnedDevelopmentDetailSheet(
+    entry: DevelopmentEntry,
+    character: DublCharacter,
+    catalog: DevelopmentCatalog,
+    onDismiss: () -> Unit,
+) {
+    val progress = DevelopmentProgress(character.development)
+    val rules = DevelopmentRules(character, catalog, progress)
+    val rank = progress.rank(entry.id)
+    val checks = rules.requirements(entry)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 690.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 18.dp, end = 18.dp, bottom = 26.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(entry.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${entry.section} · ${entry.category}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("Ранг $rank/${entry.maxRank}", style = MaterialTheme.typography.labelLarge, color = DublGold, fontWeight = FontWeight.Bold)
+            }
+            if (entry.tags.isNotEmpty()) {
+                Text(entry.tags.joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = DublGold)
+            }
+            if (entry.benefit.isNotBlank()) {
+                Text("Эффект", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(entry.benefit)
+            }
+            if (entry.notes.isNotBlank()) {
+                Text("Особое", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(entry.notes)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+            Text("Требования", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            checks.forEach { check ->
+                val color = when (check.status) {
+                    RequirementStatus.OK -> Color(0xFF71A492)
+                    RequirementStatus.FAIL -> DublDanger
+                    RequirementStatus.MANUAL -> DublGold
+                }
+                Text(
+                    "${when (check.status) { RequirementStatus.OK -> "✓"; RequirementStatus.FAIL -> "✕"; RequirementStatus.MANUAL -> "?" }} ${check.text}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = color,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+            Text(
+                if (entry.isAbility) "Стоимость доступа: ${rules.abilityCost(entry, progress.optionIndex(entry.id))} ОС"
+                else "Стоимость ранга: ${entry.cost} XP",
+                style = MaterialTheme.typography.labelLarge,
+                color = DublGold,
+            )
+            if (entry.conflictNote.isNotBlank()) {
+                Text("Расхождение книги", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(entry.conflictNote, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -1736,6 +1864,7 @@ private fun ConditionPickerSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -1816,6 +1945,7 @@ private fun ConditionDetailSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -1874,6 +2004,7 @@ private fun FavoriteSkillsSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2067,6 +2198,7 @@ private fun CheckRollSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2484,6 +2616,7 @@ private fun ResourceVisibilitySheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2591,6 +2724,7 @@ private fun StatInfoSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2710,6 +2844,7 @@ private fun ResourceAdjustSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2771,6 +2906,7 @@ private fun AttributeAdjustSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2849,6 +2985,7 @@ private fun HealthControlSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2932,7 +3069,7 @@ private fun CustomResourceControlSheet(
     onEdit: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -3036,6 +3173,7 @@ private fun TextValueEditSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -3099,6 +3237,7 @@ private fun ExperienceEconomySheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(

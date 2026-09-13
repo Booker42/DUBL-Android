@@ -93,6 +93,24 @@ data class DevelopmentAvailability(
     val reason: String,
 )
 
+enum class DevelopmentSheetSectionType {
+    REGULAR,
+    SPECIAL,
+}
+
+data class DevelopmentSheetItem(
+    val entry: DevelopmentEntry,
+    val rank: Int,
+    val optionIndex: Int,
+    val depth: Int,
+    val parentId: String? = null,
+)
+
+data class DevelopmentSheetSection(
+    val type: DevelopmentSheetSectionType,
+    val items: List<DevelopmentSheetItem>,
+)
+
 class DevelopmentCatalog(
     val version: String,
     val entries: List<DevelopmentEntry>,
@@ -149,6 +167,62 @@ class DevelopmentRules(
 
     fun requirements(entry: DevelopmentEntry): List<RequirementCheck> =
         requirementsInternal(entry, emptySet())
+
+    fun ownedSheetSections(): List<DevelopmentSheetSection> {
+        val ownedEntries = progress.owned.entries.mapNotNull { (id, owned) ->
+            catalog.byId(id)?.takeIf { owned.rank > 0 }?.let { it to owned }
+        }
+
+        fun buildSection(
+            type: DevelopmentSheetSectionType,
+            source: List<Pair<DevelopmentEntry, OwnedDevelopment>>,
+        ): DevelopmentSheetSection? {
+            if (source.isEmpty()) return null
+            val sourceById = source.associateBy { it.first.id }
+            val ids = sourceById.keys
+            val parentById = source.associate { (entry, _) ->
+                val parent = entry.accessId?.takeIf { it in ids }
+                    ?: requirements(entry).asSequence()
+                        .mapNotNull { it.targetEntryId }
+                        .firstOrNull { it != entry.id && it in ids }
+                entry.id to parent
+            }
+            val children = source.groupBy { (entry, _) -> parentById[entry.id] }
+            val result = mutableListOf<DevelopmentSheetItem>()
+            val visited = mutableSetOf<String>()
+
+            fun append(entry: DevelopmentEntry, owned: OwnedDevelopment, depth: Int) {
+                if (!visited.add(entry.id)) return
+                result += DevelopmentSheetItem(
+                    entry = entry,
+                    rank = owned.rank,
+                    optionIndex = owned.optionIndex,
+                    depth = depth,
+                    parentId = parentById[entry.id],
+                )
+                children[entry.id].orEmpty()
+                    .sortedBy { developmentNormalize(it.first.name) }
+                    .forEach { (childEntry, childOwned) -> append(childEntry, childOwned, depth + 1) }
+            }
+
+            source.filter { (entry, _) -> parentById[entry.id] == null }
+                .sortedBy { developmentNormalize(it.first.name) }
+                .forEach { (entry, owned) -> append(entry, owned, 0) }
+
+            source.filterNot { (entry, _) -> entry.id in visited }
+                .sortedBy { developmentNormalize(it.first.name) }
+                .forEach { (entry, owned) -> append(entry, owned, 0) }
+
+            return DevelopmentSheetSection(type, result)
+        }
+
+        val regular = ownedEntries.filter { (entry, _) -> entry.isRegularDevelopment }
+        val special = ownedEntries.filter { (entry, _) -> entry.isSpecialDevelopment }
+        return listOfNotNull(
+            buildSection(DevelopmentSheetSectionType.REGULAR, regular),
+            buildSection(DevelopmentSheetSectionType.SPECIAL, special),
+        )
+    }
 
     fun abilityPointsSpent(): Int = progress.owned.entries.sumOf { (id, owned) ->
         val entry = catalog.byId(id) ?: return@sumOf 0

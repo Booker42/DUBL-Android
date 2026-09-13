@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2 — Compact development sheet and interaction polish
+
+- Grouped acquired development on the Character sheet into ordinary and special sections.
+- Ordered acquired development by prerequisites, placing dependent entries under their first owned prerequisite without duplicating them.
+- Reduced Character-sheet development rows to name and rank only; tapping opens full details.
+- Made the full spell catalog row tappable for learning instead of requiring the small add button.
+- Made the full equipment catalog row tappable; tapping an owned catalog item adds one more.
+- Added a toggle to hide or reveal unlearned magic schools.
+- Disabled bottom-sheet drag gestures so scrolling long sheet content cannot pull or jitter the whole sheet at scroll boundaries.
+- Bumped the default Android version to `0.3.2`.
+
 ## 0.3.1 — Custom resources and school magic
 
 - Added manual maximum overrides for Health, Endurance, and Mana with reset-to-formula behavior.

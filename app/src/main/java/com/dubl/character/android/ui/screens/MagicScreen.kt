@@ -71,6 +71,7 @@ fun MagicScreen(controller: CharacterController) {
     val catalog = remember(context) { MagicEquipmentCatalogRepository(context).load() }
     var spellQuery by remember(character.id) { mutableStateOf("") }
     var schoolFilter by remember(character.id) { mutableStateOf<String?>(null) }
+    var hideUnlearnedSchools by remember(character.id) { mutableStateOf(true) }
     var selectedSpellUid by remember(character.id) { mutableStateOf<String?>(null) }
     var showCatalog by remember(character.id) { mutableStateOf(false) }
     var editSpell by remember(character.id) { mutableStateOf<KnownSpell?>(null) }
@@ -126,17 +127,35 @@ fun MagicScreen(controller: CharacterController) {
             DublCard(Modifier.fillMaxWidth()) {
                 Text("Школы магии", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("Сила каждой школы: 25 XP за уровень", style = MaterialTheme.typography.bodySmall, color = DublMuted)
-                Spacer(Modifier.height(8.dp))
-                MagicSchoolCatalog.schools.forEachIndexed { index, schoolName ->
-                    val power = MagicEquipmentRules.schoolPower(character, schoolName)
-                    SchoolPowerRow(
-                        name = schoolName,
-                        power = power,
-                        onMinus = { controller.setMagicSchoolPower(schoolName, (power - 1).coerceAtLeast(0)) },
-                        onPlus = { controller.setMagicSchoolPower(schoolName, power + 1) },
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Скрыть неизученные школы", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        Text("Показывать только школы с Силой магии 1+", style = MaterialTheme.typography.labelSmall, color = DublMuted)
+                    }
+                    Switch(checked = hideUnlearnedSchools, onCheckedChange = { hideUnlearnedSchools = it })
+                }
+                Spacer(Modifier.height(6.dp))
+                val visibleSchools = MagicEquipmentRules.visibleMagicSchools(character, hideUnlearnedSchools)
+                if (visibleSchools.isEmpty()) {
+                    Text(
+                        "Изученных школ пока нет. Отключите фильтр, чтобы выбрать школу.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DublMuted,
+                        modifier = Modifier.padding(vertical = 6.dp),
                     )
-                    if (index != MagicSchoolCatalog.schools.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                } else {
+                    visibleSchools.forEachIndexed { index, schoolName ->
+                        val power = MagicEquipmentRules.schoolPower(character, schoolName)
+                        SchoolPowerRow(
+                            name = schoolName,
+                            power = power,
+                            onMinus = { controller.setMagicSchoolPower(schoolName, (power - 1).coerceAtLeast(0)) },
+                            onPlus = { controller.setMagicSchoolPower(schoolName, power + 1) },
+                        )
+                        if (index != visibleSchools.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        }
                     }
                 }
             }
@@ -571,7 +590,7 @@ private fun SpellCatalogSheet(
             matchesQuery && matchesSchool
         }.sortedWith(compareBy<SpellCatalogEntry> { MagicSchoolCatalog.parseSchools(it.school).minOfOrNull(MagicSchoolCatalog::sortIndex) ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
     }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -615,6 +634,8 @@ private fun SpellCatalogSheet(
                     val owned = entry.id in ownedIds
                     val usability = MagicEquipmentRules.spellUsability(character, entry)
                     Surface(
+                        onClick = { if (!owned && !entry.incomplete) onAdd(entry) },
+                        enabled = !owned && !entry.incomplete,
                         shape = RoundedCornerShape(13.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
@@ -647,9 +668,12 @@ private fun SpellCatalogSheet(
                                     )
                                 }
                             }
-                            TextButton(onClick = { onAdd(entry) }, enabled = !owned && !entry.incomplete) {
-                                Text(if (owned) "Есть" else if (entry.incomplete) "Черновик" else "+")
-                            }
+                            Text(
+                                if (owned) "Изучено" else if (entry.incomplete) "Черновик" else "Добавить",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (owned || entry.incomplete) DublMuted else DublMana,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }
@@ -668,7 +692,7 @@ private fun SpellDetailSheet(
     onToggleLearned: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

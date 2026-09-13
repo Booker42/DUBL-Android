@@ -587,6 +587,7 @@ private fun SkillBreakdownSheet(
     val options = character.skillCalculationOptions(skill)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -666,6 +667,7 @@ private fun SkillRankSheet(
     val nextCost = SkillCatalog.nextRankCost(skill.rank)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetGesturesEnabled = false,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -723,7 +725,7 @@ private fun SkillDetailSheet(
     val calculations = character.skillCalculationOptions(skill)
     val nextCost = SkillCatalog.nextRankCost(skill.rank)
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetGesturesEnabled = false) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

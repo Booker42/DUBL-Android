@@ -244,4 +244,67 @@ class DevelopmentRulesTest {
         assertTrue(after.availability(locked).canForceIncrease)
     }
 
+    @Test
+    fun ownedSheetOrderSeparatesRegularAndSpecialAndNestsByFirstRequirement() {
+        val parry = child.copy(
+            id = "parry",
+            name = "Парирование",
+            section = "Навыки",
+            category = "Защита",
+            accessId = null,
+            requirements = "-",
+        )
+        val riposte = child.copy(
+            id = "riposte",
+            name = "Рипост",
+            section = "Навыки",
+            category = "Защита",
+            accessId = null,
+            requirements = "Парирование",
+        )
+        val grip = child.copy(
+            id = "grip",
+            name = "Крепкий хват",
+            section = "Навыки",
+            category = "Общие",
+            accessId = null,
+            requirements = "-",
+        )
+        val complex = child.copy(
+            id = "complex",
+            name = "Сложная техника",
+            section = "Навыки",
+            category = "Защита",
+            accessId = null,
+            requirements = "Парирование, Крепкий хват",
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(parry, riposte, grip, complex, access, child))
+        val progress = DevelopmentProgress(
+            mapOf(
+                parry.id to OwnedDevelopment(rank = 1),
+                riposte.id to OwnedDevelopment(rank = 1),
+                grip.id to OwnedDevelopment(rank = 1),
+                complex.id to OwnedDevelopment(rank = 1),
+                access.id to OwnedDevelopment(rank = 1),
+                child.id to OwnedDevelopment(rank = 1),
+            )
+        )
+        val rules = DevelopmentRules(character(stealthRank = 4, dexterity = 4), localCatalog, progress)
+        val sections = rules.ownedSheetSections()
+
+        assertEquals(listOf(DevelopmentSheetSectionType.REGULAR, DevelopmentSheetSectionType.SPECIAL), sections.map { it.type })
+        val regular = sections.first().items
+        assertEquals(4, regular.size)
+        assertEquals(4, regular.map { it.entry.id }.distinct().size)
+        assertTrue(regular.indexOfFirst { it.entry.id == parry.id } < regular.indexOfFirst { it.entry.id == riposte.id })
+        assertEquals(1, regular.first { it.entry.id == riposte.id }.depth)
+        assertEquals(1, regular.first { it.entry.id == complex.id }.depth)
+        assertEquals(parry.id, regular.first { it.entry.id == complex.id }.parentId)
+
+        val special = sections.last().items
+        assertEquals(access.id, special.first().entry.id)
+        assertEquals(child.id, special[1].entry.id)
+        assertEquals(1, special[1].depth)
+    }
+
 }

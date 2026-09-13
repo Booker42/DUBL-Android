@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val appVersionName = providers.environmentVariable("DUBL_VERSION_NAME").orNull ?: "0.3.1"
+val appVersionName = providers.environmentVariable("DUBL_VERSION_NAME").orNull ?: "0.3.2"
 val appVersionCode = providers.environmentVariable("DUBL_VERSION_CODE").orNull?.toIntOrNull() ?: 3001
 val releaseKeystorePath = providers.environmentVariable("DUBL_KEYSTORE_PATH").orNull
 val releaseKeystorePassword = providers.environmentVariable("DUBL_KEYSTORE_PASSWORD").orNull

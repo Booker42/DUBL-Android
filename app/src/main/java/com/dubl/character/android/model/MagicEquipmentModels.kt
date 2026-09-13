@@ -206,6 +206,13 @@ object MagicEquipmentRules {
         .filter { MagicSchoolCatalog.canonicalizeOrNull(it.name) != null }
         .sumOf { it.rank.coerceAtLeast(0) * 25 }
 
+    fun visibleMagicSchools(character: DublCharacter, hideUnlearned: Boolean): List<String> =
+        if (!hideUnlearned) {
+            MagicSchoolCatalog.schools
+        } else {
+            MagicSchoolCatalog.schools.filter { schoolPower(character, it) > 0 }
+        }
+
     fun schoolPower(character: DublCharacter, schoolName: String): Int {
         val canonical = MagicSchoolCatalog.canonicalizeOrNull(schoolName) ?: return 0
         return character.magic.schools
