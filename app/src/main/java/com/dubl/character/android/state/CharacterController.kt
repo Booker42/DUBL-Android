@@ -7,11 +7,13 @@ import com.dubl.character.android.data.CharacterRepository
 import com.dubl.character.android.model.AppSnapshot
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterSkill
+import com.dubl.character.android.model.CustomResource
 import com.dubl.character.android.model.GearCatalogEntry
 import com.dubl.character.android.model.GearItem
 import com.dubl.character.android.model.KnownSpell
 import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.model.MagicSchool
+import com.dubl.character.android.model.MagicSchoolCatalog
 import com.dubl.character.android.model.SpellCatalogEntry
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.OwnedDevelopment
@@ -70,7 +72,7 @@ class CharacterController(private val repository: CharacterRepository) {
     fun completeCreation() = updateActive { character ->
         if (character.creationComplete) return@updateActive character
         val creationXp = character.effectiveCreationExperience.coerceAtMost(character.experience)
-        val fullMana = if (character.magic.manaRank > 0) MagicEquipmentRules.manaMaximum(character) else character.manaCurrent
+        val fullMana = if (character.manaEnabled || character.magic.manaRank > 0) character.effectiveManaMaximum else character.manaCurrent
         character.copy(
             creationExperience = creationXp,
             creationComplete = true,
@@ -86,6 +88,65 @@ class CharacterController(private val repository: CharacterRepository) {
     fun changeHp(delta: Int) = updateActive { it.copy(hpCurrent = it.hpCurrent + delta) }
     fun changeEndurance(delta: Int) = updateActive { it.copy(enduranceCurrent = it.enduranceCurrent + delta) }
     fun changeMana(delta: Int) = updateActive { it.copy(manaCurrent = it.manaCurrent + delta) }
+
+    fun setHealthMaximumOverride(value: Int?) = updateActive { character ->
+        character.copy(healthMaximumOverride = value?.coerceAtLeast(0))
+    }
+
+    fun setEnduranceMaximumOverride(value: Int?) = updateActive { character ->
+        character.copy(enduranceMaximumOverride = value?.coerceAtLeast(0))
+    }
+
+    fun setManaMaximumOverride(value: Int?) = updateActive { character ->
+        character.copy(
+            manaMaximumOverride = value?.coerceAtLeast(0),
+            manaEnabled = character.manaEnabled || value != null || character.magic.manaRank > 0,
+        )
+    }
+
+    fun addCustomResource(name: String, maximum: Int, current: Int = maximum): String? {
+        val cleanName = name.trim().replace(Regex("\\s+"), " ")
+        if (cleanName.isBlank()) return null
+        val uid = UUID.randomUUID().toString()
+        val max = maximum.coerceAtLeast(0)
+        updateActive { character ->
+            character.copy(
+                customResources = character.customResources + CustomResource(
+                    uid = uid,
+                    name = cleanName,
+                    current = current.coerceIn(0, max),
+                    maximum = max,
+                ),
+            )
+        }
+        return uid
+    }
+
+    fun updateCustomResource(uid: String, name: String, current: Int, maximum: Int) = updateActive { character ->
+        val cleanName = name.trim().replace(Regex("\\s+"), " ").ifBlank { "Ресурс" }
+        val max = maximum.coerceAtLeast(0)
+        character.copy(
+            customResources = character.customResources.map { resource ->
+                if (resource.uid == uid) resource.copy(
+                    name = cleanName,
+                    current = current.coerceIn(0, max),
+                    maximum = max,
+                ) else resource
+            },
+        )
+    }
+
+    fun changeCustomResource(uid: String, delta: Int) = updateActive { character ->
+        character.copy(
+            customResources = character.customResources.map { resource ->
+                if (resource.uid == uid) resource.copy(current = resource.current + delta) else resource
+            },
+        )
+    }
+
+    fun removeCustomResource(uid: String) = updateActive { character ->
+        character.copy(customResources = character.customResources.filterNot { it.uid == uid })
+    }
 
     fun changeSkillRank(skillId: String, delta: Int) = updateSkill(skillId) { skill ->
         skill.copy(rank = (skill.rank + delta).coerceIn(0, 10))
@@ -136,32 +197,45 @@ class CharacterController(private val repository: CharacterRepository) {
     fun setMagicManaRank(rank: Int) = updateActive { character ->
         val nextRank = rank.coerceIn(0, 5)
         if (character.creationComplete && nextRank != character.magic.manaRank) return@updateActive character
-        val nextPower = if (nextRank > 0) character.magic.power.coerceAtLeast(1) else character.magic.power
         var updated = character.copy(
-            magic = character.magic.copy(manaRank = nextRank, power = nextPower),
+            magic = character.magic.copy(manaRank = nextRank),
             development = character.development - MagicEquipmentRules.BASE_MANA_ENTRY_ID,
-            manaEnabled = nextRank > 0,
-            manaCurrent = if (nextRank > 0) character.manaCurrent else 0,
+            manaEnabled = nextRank > 0 || character.manaMaximumOverride != null,
+            manaCurrent = if (nextRank > 0 || character.manaMaximumOverride != null) character.manaCurrent else 0,
             manaMaximum = if (nextRank > 0) character.manaMaximum else 0,
         )
-        if (!character.creationComplete && nextRank > 0) {
-            updated = updated.copy(manaCurrent = MagicEquipmentRules.manaMaximum(updated))
+        if (!character.creationComplete && (nextRank > 0 || character.manaMaximumOverride != null)) {
+            updated = updated.copy(manaCurrent = updated.effectiveManaMaximum)
         }
         updated
     }
 
+    @Deprecated("0.3.1 uses per-school magic power")
     fun setMagicPower(power: Int) = updateActive { character ->
-        val nextPower = if (character.magic.manaRank > 0) power.coerceAtLeast(1) else power.coerceAtLeast(0)
-        var updated = character.copy(magic = character.magic.copy(power = nextPower))
+        character.copy(magic = character.magic.copy(power = power.coerceAtLeast(0)))
+    }
+
+    fun setMagicSchoolPower(name: String, power: Int) = updateActive { character ->
+        val canonical = MagicSchoolCatalog.canonicalizeOrNull(name) ?: return@updateActive character
+        val nextPower = power.coerceAtLeast(0)
+        val without = character.magic.schools.filterNot {
+            MagicSchoolCatalog.canonicalizeOrNull(it.name) == canonical
+        }
+        val schools = if (nextPower == 0) without else without + MagicSchool(canonical, nextPower)
+        var updated = character.copy(
+            magic = character.magic.copy(
+                power = 0,
+                schools = schools.sortedWith(compareBy<MagicSchool> { MagicSchoolCatalog.sortIndex(it.name) }.thenBy { it.name.lowercase() }),
+            ),
+        )
         if (!character.creationComplete && character.magic.manaRank > 0) {
-            updated = updated.copy(manaCurrent = MagicEquipmentRules.manaMaximum(updated))
+            updated = updated.copy(manaCurrent = updated.effectiveManaMaximum)
         }
         updated
     }
 
     fun addMagicSchool(name: String, rank: Int, note: String): Boolean {
-        val clean = name.trim().replace(Regex("\\s+"), " ")
-        if (clean.isBlank()) return false
+        val clean = MagicSchoolCatalog.canonicalizeOrNull(name) ?: return false
         if (active.magic.schools.any { it.name.equals(clean, ignoreCase = true) }) return false
         updateActive { character ->
             character.copy(
@@ -174,8 +248,8 @@ class CharacterController(private val repository: CharacterRepository) {
     }
 
     fun updateMagicSchool(index: Int, name: String, rank: Int, note: String): Boolean {
-        val clean = name.trim().replace(Regex("\\s+"), " ")
-        if (clean.isBlank() || index !in active.magic.schools.indices) return false
+        val clean = MagicSchoolCatalog.canonicalizeOrNull(name) ?: return false
+        if (index !in active.magic.schools.indices) return false
         if (active.magic.schools.withIndex().any { (otherIndex, school) ->
                 otherIndex != index && school.name.equals(clean, ignoreCase = true)
             }) return false

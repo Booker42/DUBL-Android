@@ -18,6 +18,13 @@ data class AttributeValue(
     val total: Int get() = base + bonus
 }
 
+data class CustomResource(
+    val uid: String,
+    val name: String = "Ресурс",
+    val current: Int = 0,
+    val maximum: Int = 0,
+)
+
 data class DublCharacter(
     val id: String,
     val name: String = "Новый персонаж",
@@ -35,6 +42,10 @@ data class DublCharacter(
     val manaEnabled: Boolean = false,
     val manaCurrent: Int = 0,
     val manaMaximum: Int = 0,
+    val healthMaximumOverride: Int? = null,
+    val enduranceMaximumOverride: Int? = null,
+    val manaMaximumOverride: Int? = null,
+    val customResources: List<CustomResource> = emptyList(),
     val skills: Map<String, CharacterSkill> = emptyMap(),
     val hiddenSkillIds: Set<String> = emptySet(),
     val development: Map<String, OwnedDevelopment> = emptyMap(),
@@ -58,7 +69,9 @@ data class DublCharacter(
 
     val equipmentLoadPenalty: Int get() = MagicEquipmentRules.burden(this).penalty
     val defense: Int get() = 10 - size + speed + dexterity + equipmentLoadPenalty
-    val healthMaximum: Int get() = (constitution * size + strength).coerceAtLeast(0)
+    val calculatedHealthMaximum: Int get() = (constitution * size + strength).coerceAtLeast(0)
+    val healthMaximum: Int get() = healthMaximumOverride ?: calculatedHealthMaximum
+    val enduranceMaximum: Int get() = enduranceMaximumOverride ?: 3
     val reflexes: Int get() = speed + dexterity + equipmentLoadPenalty
     val initiative: Int get() = speed + perception
     val fortitude: Int get() = constitution + will
@@ -71,7 +84,7 @@ data class DublCharacter(
     val recommendedAbilityPoints: Int get() = effectiveCreationExperience / 1000
     val abilityPoints: Int get() = abilityPointsOverride ?: recommendedAbilityPoints
     val effectiveManaMaximum: Int
-        get() = if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
+        get() = manaMaximumOverride ?: if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
 
     val runBase: Double
         get() = if (legs >= 3) {
@@ -142,12 +155,18 @@ data class DublCharacter(
         }
         val legacyManaRank = development[MagicEquipmentRules.BASE_MANA_ENTRY_ID]?.rank?.coerceIn(0, 5) ?: 0
         val normalizedManaRank = maxOf(magic.manaRank.coerceIn(0, 5), legacyManaRank)
+        val normalizedSchools = magic.schools
+            .mapNotNull { school ->
+                val cleanName = MagicSchoolCatalog.canonicalizeOrNull(school.name) ?: school.name.trim().ifBlank { return@mapNotNull null }
+                MagicSchool(cleanName, school.rank.coerceAtLeast(0), school.note.trim())
+            }
+            .groupBy { MagicSchoolCatalog.canonicalizeOrNull(it.name) ?: it.name.lowercase() }
+            .map { (_, schools) -> schools.maxBy { it.rank } }
+            .sortedWith(compareBy<MagicSchool> { MagicSchoolCatalog.sortIndex(it.name) }.thenBy { it.name.lowercase() })
         val normalizedMagic = magic.copy(
             manaRank = normalizedManaRank,
-            power = if (normalizedManaRank > 0) magic.power.coerceAtLeast(1) else magic.power.coerceAtLeast(0),
-            schools = magic.schools.map { school ->
-                school.copy(name = school.name.trim().ifBlank { "Школа" }, rank = school.rank.coerceAtLeast(0), note = school.note.trim())
-            },
+            power = if (normalizedSchools.isEmpty()) magic.power.coerceAtLeast(0) else 0,
+            schools = normalizedSchools,
             spells = magic.spells.map { spell ->
                 spell.copy(
                     name = spell.name.trim().ifBlank { "Заклинание" },
@@ -170,6 +189,12 @@ data class DublCharacter(
         )
         val normalizedExperience = experience.coerceAtLeast(0)
         val normalizedCreationExperience = creationExperience.coerceAtLeast(0).coerceAtMost(normalizedExperience)
+        val normalizedCustomResources = customResources.mapNotNull { resource ->
+            val cleanName = resource.name.trim().replace(Regex("\\s+"), " ")
+            if (resource.uid.isBlank() || cleanName.isBlank()) return@mapNotNull null
+            val max = resource.maximum.coerceAtLeast(0)
+            resource.copy(name = cleanName, maximum = max, current = resource.current.coerceIn(0, max))
+        }.distinctBy { it.uid }
         val clamped = copy(
             experience = normalizedExperience,
             creationExperience = normalizedCreationExperience,
@@ -178,8 +203,11 @@ data class DublCharacter(
             size = size.coerceIn(1, 10),
             attributes = normalizedAttributes,
             legs = legs.coerceAtLeast(2),
-            enduranceCurrent = enduranceCurrent.coerceIn(0, 3),
+            healthMaximumOverride = healthMaximumOverride?.coerceAtLeast(0),
+            enduranceMaximumOverride = enduranceMaximumOverride?.coerceAtLeast(0),
+            manaMaximumOverride = manaMaximumOverride?.coerceAtLeast(0),
             manaMaximum = manaMaximum.coerceAtLeast(0),
+            customResources = normalizedCustomResources,
             skills = normalizedSkills,
             hiddenSkillIds = hiddenSkillIds.filterTo(linkedSetOf()) { id ->
                 SkillCatalog.builtIns.any { it.id == id } || normalizedSkills.containsKey(id)
@@ -197,9 +225,10 @@ data class DublCharacter(
         val maxMana = clamped.effectiveManaMaximum
         return clamped.copy(
             hpCurrent = clamped.hpCurrent.coerceIn(0, clamped.healthMaximum),
+            enduranceCurrent = clamped.enduranceCurrent.coerceIn(0, clamped.enduranceMaximum),
             manaCurrent = clamped.manaCurrent.coerceIn(0, maxMana),
-            manaEnabled = clamped.manaEnabled || clamped.magic.manaRank > 0,
-            manaMaximum = if (clamped.magic.manaRank > 0) maxMana else clamped.manaMaximum.coerceAtLeast(0),
+            manaEnabled = clamped.manaEnabled || clamped.magic.manaRank > 0 || clamped.manaMaximumOverride != null,
+            manaMaximum = clamped.manaMaximum.coerceAtLeast(0),
         )
     }
 }

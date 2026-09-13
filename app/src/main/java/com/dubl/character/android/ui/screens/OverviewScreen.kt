@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,6 +82,12 @@ import com.dubl.character.android.model.CharacterEconomy
 import com.dubl.character.android.model.CharacterEconomyBreakdown
 import com.dubl.character.android.model.CharacterSheetResourceId
 import com.dubl.character.android.model.DublCharacter
+import com.dubl.character.android.model.CustomResource
+import com.dubl.character.android.model.DevelopmentCatalog
+import com.dubl.character.android.model.DevelopmentProgress
+import com.dubl.character.android.model.DevelopmentRules
+import com.dubl.character.android.model.RequirementStatus
+import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.model.ResolvedSkill
 import com.dubl.character.android.model.RollFollowUp
 import com.dubl.character.android.model.RollMode
@@ -175,6 +182,10 @@ fun OverviewScreen(controller: CharacterController) {
     var showFavoritePicker by remember { mutableStateOf(false) }
     var selectedSkillId by remember { mutableStateOf<String?>(null) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
+    var selectedCustomResourceId by remember(character.id) { mutableStateOf<String?>(null) }
+    var editCustomResourceId by remember(character.id) { mutableStateOf<String?>(null) }
+    var createCustomResource by remember(character.id) { mutableStateOf(false) }
+    var editMaximumResource by remember(character.id) { mutableStateOf<CharacterResource?>(null) }
     var selectedAttribute by remember { mutableStateOf<AttributeId?>(null) }
     var selectedStat by remember { mutableStateOf<StatId?>(null) }
     var showFortitudeRoll by remember { mutableStateOf(false) }
@@ -283,6 +294,7 @@ fun OverviewScreen(controller: CharacterController) {
                     character = character,
                     hiddenResources = sheetExtras.hiddenResourceIds,
                     onResourceClick = { selectedResource = it },
+                    onCustomResourceClick = { selectedCustomResourceId = it },
                     onConfigure = { showResourceVisibility = true },
                 )
                 Spacer(Modifier.height(8.dp))
@@ -321,8 +333,16 @@ fun OverviewScreen(controller: CharacterController) {
                 FavoriteSkillsSection(
                     character = character,
                     favoriteSkills = favoriteSkills,
+                    preferredAttributes = sheetExtras.preferredSkillAttributes,
                     onConfigure = { showFavoritePicker = true },
                     onSkillClick = { selectedSkillId = it.id },
+                )
+            }
+
+            item {
+                OwnedDevelopmentSection(
+                    character = character,
+                    catalog = developmentCatalog,
                 )
             }
         }
@@ -346,7 +366,7 @@ fun OverviewScreen(controller: CharacterController) {
         EditCharacterDialog(
             character = character,
             onDismiss = { showAdvancedEdit = false },
-            onConfirm = { name, concept, experience, size, legs, manaEnabled, manaMaximum ->
+            onConfirm = { name, concept, experience, size, legs, manaEnabled ->
                 controller.updateActive { current ->
                     val cleanExperience = experience.coerceAtLeast(0)
                     var updated = current.copy(
@@ -361,7 +381,6 @@ fun OverviewScreen(controller: CharacterController) {
                         size = size,
                         legs = legs,
                         manaEnabled = manaEnabled,
-                        manaMaximum = manaMaximum,
                     )
                     if (!current.creationComplete) {
                         updated = updated.copy(hpCurrent = updated.healthMaximum)
@@ -518,6 +537,8 @@ fun OverviewScreen(controller: CharacterController) {
                 }.toSet()
                 saveExtras(sheetExtras.copy(hiddenResourceIds = next))
             },
+            onAddCustom = { showResourceVisibility = false; createCustomResource = true },
+            onEditCustom = { uid -> showResourceVisibility = false; editCustomResourceId = uid },
             onDismiss = { showResourceVisibility = false },
         )
     }
@@ -542,16 +563,17 @@ fun OverviewScreen(controller: CharacterController) {
                         )
                     }
                 },
+                onEditMaximum = { selectedResource = null; editMaximumResource = CharacterResource.HEALTH },
                 onDismiss = { selectedResource = null },
             )
             CharacterResource.ENDURANCE -> ResourceAdjustSheet(
                 title = "Выносливость",
                 current = character.enduranceCurrent,
-                maximum = 3,
+                maximum = character.enduranceMaximum,
                 accent = DublStamina,
                 onChange = { requestedDelta ->
                     val before = character.enduranceCurrent
-                    val after = (before + requestedDelta).coerceIn(0, 3)
+                    val after = (before + requestedDelta).coerceIn(0, character.enduranceMaximum)
                     val applied = after - before
                     if (applied != 0) {
                         controller.changeEndurance(applied)
@@ -564,16 +586,17 @@ fun OverviewScreen(controller: CharacterController) {
                         )
                     }
                 },
+                onEditMaximum = { selectedResource = null; editMaximumResource = CharacterResource.ENDURANCE },
                 onDismiss = { selectedResource = null },
             )
             CharacterResource.MANA -> ResourceAdjustSheet(
                 title = "Мана",
                 current = character.manaCurrent,
-                maximum = character.manaMaximum,
+                maximum = character.effectiveManaMaximum,
                 accent = DublMana,
                 onChange = { requestedDelta ->
                     val before = character.manaCurrent
-                    val after = (before + requestedDelta).coerceIn(0, character.manaMaximum)
+                    val after = (before + requestedDelta).coerceIn(0, character.effectiveManaMaximum)
                     val applied = after - before
                     if (applied != 0) {
                         controller.changeMana(applied)
@@ -586,9 +609,77 @@ fun OverviewScreen(controller: CharacterController) {
                         )
                     }
                 },
+                onEditMaximum = { selectedResource = null; editMaximumResource = CharacterResource.MANA },
                 onDismiss = { selectedResource = null },
             )
         }
+    }
+
+    selectedCustomResourceId?.let { uid ->
+        character.customResources.firstOrNull { it.uid == uid }?.let { resource ->
+            CustomResourceControlSheet(
+                resource = resource,
+                onChange = { controller.changeCustomResource(uid, it) },
+                onEdit = { selectedCustomResourceId = null; editCustomResourceId = uid },
+                onDismiss = { selectedCustomResourceId = null },
+            )
+        } ?: run { selectedCustomResourceId = null }
+    }
+
+    if (createCustomResource) {
+        CustomResourceEditDialog(
+            initial = null,
+            onSave = { name, current, maximum ->
+                controller.addCustomResource(name, maximum, current)
+                createCustomResource = false
+            },
+            onDismiss = { createCustomResource = false },
+        )
+    }
+
+    editCustomResourceId?.let { uid ->
+        character.customResources.firstOrNull { it.uid == uid }?.let { resource ->
+            CustomResourceEditDialog(
+                initial = resource,
+                onSave = { name, current, maximum ->
+                    controller.updateCustomResource(uid, name, current, maximum)
+                    editCustomResourceId = null
+                },
+                onDelete = { controller.removeCustomResource(uid); editCustomResourceId = null },
+                onDismiss = { editCustomResourceId = null },
+            )
+        } ?: run { editCustomResourceId = null }
+    }
+
+    editMaximumResource?.let { resource ->
+        val calculated = when (resource) {
+            CharacterResource.HEALTH -> character.calculatedHealthMaximum
+            CharacterResource.ENDURANCE -> 3
+            CharacterResource.MANA -> if (character.magic.manaRank > 0) MagicEquipmentRules.manaMaximum(character) else character.manaMaximum
+        }
+        val override = when (resource) {
+            CharacterResource.HEALTH -> character.healthMaximumOverride
+            CharacterResource.ENDURANCE -> character.enduranceMaximumOverride
+            CharacterResource.MANA -> character.manaMaximumOverride
+        }
+        MaximumResourceDialog(
+            title = when (resource) {
+                CharacterResource.HEALTH -> "Максимум здоровья"
+                CharacterResource.ENDURANCE -> "Максимум выносливости"
+                CharacterResource.MANA -> "Максимум маны"
+            },
+            calculated = calculated,
+            override = override,
+            onSave = { value ->
+                when (resource) {
+                    CharacterResource.HEALTH -> controller.setHealthMaximumOverride(value)
+                    CharacterResource.ENDURANCE -> controller.setEnduranceMaximumOverride(value)
+                    CharacterResource.MANA -> controller.setManaMaximumOverride(value)
+                }
+                editMaximumResource = null
+            },
+            onDismiss = { editMaximumResource = null },
+        )
     }
 
     selectedAttribute?.let { id ->
@@ -851,7 +942,7 @@ private fun CompactHeroBar(
             }
             if (CharacterSheetResourceId.ENDURANCE !in hiddenResources) {
                 Text(
-                    text = "Вын ${character.enduranceCurrent}/3",
+                    text = "Вын ${character.enduranceCurrent}/${character.enduranceMaximum}",
                     style = MaterialTheme.typography.labelLarge,
                     color = DublStamina,
                 )
@@ -954,6 +1045,7 @@ private fun ResourceStrip(
     character: DublCharacter,
     hiddenResources: Set<CharacterSheetResourceId>,
     onResourceClick: (CharacterResource) -> Unit,
+    onCustomResourceClick: (String) -> Unit,
     onConfigure: () -> Unit,
 ) {
     val resources = buildList {
@@ -962,12 +1054,9 @@ private fun ResourceStrip(
         if (character.manaEnabled && CharacterSheetResourceId.MANA !in hiddenResources) add(CharacterResource.MANA)
     }
 
-    if (resources.isEmpty()) {
+    if (resources.isEmpty() && character.customResources.isEmpty()) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onConfigure),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onConfigure),
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
@@ -983,37 +1072,32 @@ private fun ResourceStrip(
         return
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        resources.forEach { resource ->
-            when (resource) {
-                CharacterResource.HEALTH -> CompactResourceCard(
-                    title = "Здоровье",
-                    current = character.hpCurrent,
-                    maximum = character.healthMaximum,
-                    accent = DublHealth,
-                    criticalLevel = healthCriticalLevel(character.hpCurrent, character.healthMaximum),
-                    modifier = Modifier.weight(1f),
-                    onClick = { onResourceClick(resource) },
-                )
-                CharacterResource.ENDURANCE -> CompactResourceCard(
-                    title = "Выносливость",
-                    current = character.enduranceCurrent,
-                    maximum = 3,
-                    accent = DublStamina,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onResourceClick(resource) },
-                )
-                CharacterResource.MANA -> CompactResourceCard(
-                    title = "Мана",
-                    current = character.manaCurrent,
-                    maximum = character.manaMaximum,
-                    accent = DublMana,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onResourceClick(resource) },
-                )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        resources.chunked(3).forEach { rowResources ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowResources.forEach { resource ->
+                    when (resource) {
+                        CharacterResource.HEALTH -> CompactResourceCard("Здоровье", character.hpCurrent, character.healthMaximum, DublHealth, Modifier.weight(1f), healthCriticalLevel(character.hpCurrent, character.healthMaximum)) { onResourceClick(resource) }
+                        CharacterResource.ENDURANCE -> CompactResourceCard("Выносливость", character.enduranceCurrent, character.enduranceMaximum, DublStamina, Modifier.weight(1f)) { onResourceClick(resource) }
+                        CharacterResource.MANA -> CompactResourceCard("Мана", character.manaCurrent, character.effectiveManaMaximum, DublMana, Modifier.weight(1f)) { onResourceClick(resource) }
+                    }
+                }
+                repeat(3 - rowResources.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        character.customResources.chunked(2).forEach { rowResources ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowResources.forEach { resource ->
+                    CompactResourceCard(
+                        title = resource.name,
+                        current = resource.current,
+                        maximum = resource.maximum,
+                        accent = DublGold,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onCustomResourceClick(resource.uid) },
+                    )
+                }
+                if (rowResources.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -1067,6 +1151,7 @@ private fun CompactResourceCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (criticalLevel >= 2) {
                     Text(
@@ -1423,6 +1508,7 @@ private fun runMultiplier(character: DublCharacter): Double = if (character.legs
 private fun FavoriteSkillsSection(
     character: DublCharacter,
     favoriteSkills: List<ResolvedSkill>,
+    preferredAttributes: Map<String, AttributeId>,
     onConfigure: () -> Unit,
     onSkillClick: (ResolvedSkill) -> Unit,
 ) {
@@ -1457,6 +1543,7 @@ private fun FavoriteSkillsSection(
                     FavoriteSkillTile(
                         character = character,
                         skill = skill,
+                        preferredAttribute = preferredAttributes[skill.id],
                         onClick = { onSkillClick(skill) },
                     )
                 }
@@ -1475,52 +1562,70 @@ private fun FavoriteSkillsSection(
 private fun FavoriteSkillTile(
     character: DublCharacter,
     skill: ResolvedSkill,
+    preferredAttribute: AttributeId?,
     onClick: () -> Unit,
 ) {
-    val calculations = character.skillCalculationOptions(skill)
-    val bonusText = if (calculations.size == 1) {
-        calculations.first().second.total?.let(::signed) ?: "—"
-    } else {
-        calculations.joinToString(" / ") { (attribute, calculation) ->
-            "${attribute.shortTitle} ${calculation.total?.let(::signed) ?: "—"}"
+    val selected = preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.firstOrNull()
+    val calculation = selected?.let { character.skillCalculation(skill, it) }
+    val bonus = calculation?.total?.let(::signed) ?: "—"
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = DublGold.copy(alpha = 0.04f),
+        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.30f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                skill.name,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text("Ранг ${skill.rank}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(10.dp))
+            Text(bonus, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = DublGold)
         }
     }
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(11.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(11.dp),
-        color = DublGold.copy(alpha = 0.045f),
-        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.36f)),
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(
-                text = skill.name,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-            )
-            Spacer(Modifier.height(5.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Text(
-                    text = skill.attributes.joinToString(" / ") { it.title },
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = bonusText,
-                    fontSize = if (calculations.size > 1) 15.sp else 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = DublGold,
-                )
+}
+
+@Composable
+private fun OwnedDevelopmentSection(
+    character: DublCharacter,
+    catalog: DevelopmentCatalog,
+) {
+    val owned = character.development.mapNotNull { (id, value) ->
+        catalog.byId(id)?.takeIf { value.rank > 0 }?.let { Triple(it, value.rank, value.optionIndex) }
+    }.sortedBy { it.first.name.lowercase() }
+    if (owned.isEmpty()) return
+    val rules = DevelopmentRules(character, catalog, DevelopmentProgress(character.development))
+    Column {
+        SectionTitle("Взятые навыки", trailing = "${owned.size}")
+        Spacer(Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            owned.forEach { (entry, rank, _) ->
+                val invalid = rules.requirements(entry).any { it.status != RequirementStatus.OK }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (invalid) DublDanger.copy(alpha = 0.7f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(entry.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 2)
+                            if (entry.maxRank > 1) Text("Ранг $rank", style = MaterialTheme.typography.labelMedium, color = DublGold)
+                        }
+                        if (entry.benefit.isNotBlank()) {
+                            Text(entry.benefit, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                        }
+                        if (invalid) Text("⚠ Требования не выполнены", style = MaterialTheme.typography.labelSmall, color = DublDanger)
+                    }
+                }
             }
         }
     }
@@ -2373,6 +2478,8 @@ private fun ResourceVisibilitySheet(
     character: DublCharacter,
     hidden: Set<CharacterSheetResourceId>,
     onToggle: (CharacterSheetResourceId) -> Unit,
+    onAddCustom: () -> Unit,
+    onEditCustom: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -2410,6 +2517,28 @@ private fun ResourceVisibilitySheet(
                 subtitle = if (character.manaEnabled) null else "Мана отключена у персонажа",
                 onToggle = { onToggle(CharacterSheetResourceId.MANA) },
             )
+            if (character.customResources.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text("Кастомные ресурсы", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                character.customResources.forEach { resource ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { onEditCustom(resource.uid) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(resource.name, style = MaterialTheme.typography.bodyLarge)
+                            Text("${resource.current} / ${resource.maximum}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("Изменить", style = MaterialTheme.typography.labelMedium, color = DublGold)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = onAddCustom, modifier = Modifier.fillMaxWidth()) {
+                Text("+ Добавить кастомный ресурс")
+            }
         }
     }
 }
@@ -2576,6 +2705,7 @@ private fun ResourceAdjustSheet(
     maximum: Int,
     accent: Color,
     onChange: (Int) -> Unit,
+    onEditMaximum: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -2619,6 +2749,10 @@ private fun ResourceAdjustSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onEditMaximum, modifier = Modifier.fillMaxWidth()) {
+                Text("Изменить максимум")
+            }
         }
     }
 }
@@ -2707,6 +2841,7 @@ private fun HealthControlSheet(
     current: Int,
     maximum: Int,
     onChange: (Int) -> Unit,
+    onEditMaximum: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var amountText by remember(current, maximum) { mutableStateOf("1") }
@@ -2782,8 +2917,110 @@ private fun HealthControlSheet(
                 enabled = current < maximum,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Восстановить всё здоровье") }
+            TextButton(onClick = onEditMaximum, modifier = Modifier.fillMaxWidth()) {
+                Text("Изменить максимум здоровья")
+            }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomResourceControlSheet(
+    resource: CustomResource,
+    onChange: (Int) -> Unit,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(resource.name, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text("${resource.current} / ${resource.maximum}", fontSize = 36.sp, lineHeight = 42.sp, fontWeight = FontWeight.Bold, color = DublGold)
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = { onChange(-1) }, enabled = resource.current > 0, modifier = Modifier.weight(1f)) { Text("− 1") }
+                Button(onClick = { onChange(1) }, enabled = resource.current < resource.maximum, modifier = Modifier.weight(1f)) { Text("+ 1") }
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) { Text("Изменить ресурс") }
+        }
+    }
+}
+
+@Composable
+private fun CustomResourceEditDialog(
+    initial: CustomResource?,
+    onSave: (String, Int, Int) -> Unit,
+    onDelete: (() -> Unit)? = null,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(initial?.uid) { mutableStateOf(initial?.name.orEmpty()) }
+    var maximumText by remember(initial?.uid) { mutableStateOf((initial?.maximum ?: 1).toString()) }
+    var currentText by remember(initial?.uid) { mutableStateOf((initial?.current ?: 0).toString()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "Новый ресурс" else "Изменить ресурс") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Название") }, singleLine = true)
+                OutlinedTextField(maximumText, { maximumText = it.filter(Char::isDigit).take(6) }, label = { Text("Максимум") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                OutlinedTextField(currentText, { currentText = it.filter(Char::isDigit).take(6) }, label = { Text("Текущее значение") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val max = maximumText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                val current = currentText.toIntOrNull()?.coerceIn(0, max) ?: 0
+                if (name.trim().isNotBlank()) onSave(name.trim(), current, max)
+            }, enabled = name.trim().isNotBlank()) { Text("Сохранить") }
+        },
+        dismissButton = {
+            Row {
+                if (onDelete != null) TextButton(onClick = onDelete) { Text("Удалить") }
+                TextButton(onClick = onDismiss) { Text("Отмена") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun MaximumResourceDialog(
+    title: String,
+    calculated: Int,
+    override: Int?,
+    onSave: (Int?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var valueText by remember(title, override) { mutableStateOf((override ?: calculated).toString()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("По формуле: $calculated", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = valueText,
+                    onValueChange = { valueText = it.filter(Char::isDigit).take(6) },
+                    label = { Text("Максимум вручную") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(valueText.toIntOrNull()?.coerceAtLeast(0) ?: 0) }) { Text("Сохранить") }
+        },
+        dismissButton = {
+            Row {
+                if (override != null) TextButton(onClick = { onSave(null) }) { Text("Сбросить к формуле") }
+                TextButton(onClick = onDismiss) { Text("Отмена") }
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2912,6 +3149,7 @@ private fun ExperienceEconomySheet(
             EconomyLine("Умения", economy.skillXp)
             EconomyLine("Навыки", economy.developmentXp)
             EconomyLine("Базовый запас маны", economy.manaXp)
+            EconomyLine("Сила магии по школам", economy.magicSchoolXp)
             EconomyLine("Заклинания", economy.spellXp)
             EconomyLine("Ручная поправка", economy.adjustmentXp)
             HorizontalDivider()
@@ -3018,7 +3256,7 @@ private fun EconomyLine(label: String, value: Int, bold: Boolean = false) {
 private fun EditCharacterDialog(
     character: DublCharacter,
     onDismiss: () -> Unit,
-    onConfirm: (String, String, Int, Int, Int, Boolean, Int) -> Unit,
+    onConfirm: (String, String, Int, Int, Int, Boolean) -> Unit,
 ) {
     var name by remember(character.id) { mutableStateOf(character.name) }
     var concept by remember(character.id) { mutableStateOf(character.concept) }
@@ -3026,7 +3264,6 @@ private fun EditCharacterDialog(
     var size by remember(character.id) { mutableStateOf(character.size.toString()) }
     var legs by remember(character.id) { mutableStateOf(character.legs.toString()) }
     var manaEnabled by remember(character.id) { mutableStateOf(character.manaEnabled) }
-    var manaMaximum by remember(character.id) { mutableStateOf(character.manaMaximum.toString()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3049,9 +3286,11 @@ private fun EditCharacterDialog(
                     Text("Использовать ману")
                     Switch(checked = manaEnabled, onCheckedChange = { manaEnabled = it })
                 }
-                if (manaEnabled) {
-                    NumericField("Максимум маны", manaMaximum) { manaMaximum = it }
-                }
+                Text(
+                    "Максимумы здоровья, выносливости и маны меняются прямо из карточек ресурсов.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
@@ -3064,7 +3303,6 @@ private fun EditCharacterDialog(
                         size.toIntOrNull()?.coerceIn(1, 10) ?: 5,
                         legs.toIntOrNull()?.coerceAtLeast(2) ?: 2,
                         manaEnabled,
-                        manaMaximum.toIntOrNull()?.coerceAtLeast(0) ?: 0,
                     )
                 },
             ) { Text("Сохранить") }

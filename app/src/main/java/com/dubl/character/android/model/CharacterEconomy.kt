@@ -7,6 +7,7 @@ data class CharacterEconomyBreakdown(
     val skillXp: Int,
     val developmentXp: Int,
     val manaXp: Int,
+    val magicSchoolXp: Int,
     val spellXp: Int,
     val adjustmentXp: Int,
     val spentXp: Int,
@@ -89,9 +90,10 @@ object CharacterEconomy {
         val skills = character.skillXpSpent()
         val development = developmentXp(character, catalog)
         val mana = MagicEquipmentRules.manaRankXp(character)
+        val magicSchools = MagicEquipmentRules.magicSchoolPowerXp(character)
         val spells = MagicEquipmentRules.learnedSpellXp(character)
         val adjustment = character.xpAdjustment
-        val spent = attributes + skills + development + mana + spells + adjustment
+        val spent = attributes + skills + development + mana + magicSchools + spells + adjustment
         val abilitySpent = abilityPointsSpent(character, catalog)
         val abilityBudget = character.abilityPoints
         return CharacterEconomyBreakdown(
@@ -101,6 +103,7 @@ object CharacterEconomy {
             skillXp = skills,
             developmentXp = development,
             manaXp = mana,
+            magicSchoolXp = magicSchools,
             spellXp = spells,
             adjustmentXp = adjustment,
             spentXp = spent,

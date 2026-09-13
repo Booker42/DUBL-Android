@@ -36,6 +36,67 @@ data class CharacterMagic(
     val spells: List<KnownSpell> = emptyList(),
 )
 
+object MagicSchoolCatalog {
+    val schools: List<String> = listOf(
+        "Боевая магия",
+        "Воплощение",
+        "Друид",
+        "Магия крови",
+        "Молитва",
+        "Некромантия",
+        "Ограждение",
+        "Призыв",
+        "Природа",
+        "Прорицание",
+        "Разрушение",
+        "Разум",
+        "Трансмутация",
+    )
+
+    private val aliases = mapOf(
+        "ограждения" to "Ограждение",
+        "молитвы" to "Молитва",
+        "некромант" to "Некромантия",
+        "друидичество" to "Друид",
+        "друидическая магия" to "Друид",
+        "боевая" to "Боевая магия",
+    )
+
+    fun canonicalizeOrNull(value: String): String? {
+        val clean = value.trim().lowercase().replace('ё', 'е')
+        if (clean.isBlank() || clean == "-") return null
+        aliases[clean]?.let { return it }
+        return schools.firstOrNull { it.lowercase().replace('ё', 'е') == clean }
+    }
+
+    fun canonicalize(value: String): String = canonicalizeOrNull(value) ?: value.trim()
+
+    fun parseSchools(raw: String): List<String> {
+        if (raw.isBlank()) return emptyList()
+        val expanded = raw
+            .replace("(", " / ")
+            .replace(")", " ")
+            .replace(Regex("/+"), " / ")
+        return expanded
+            .split('/')
+            .mapNotNull { canonicalizeOrNull(it) }
+            .distinct()
+            .sortedBy(::sortIndex)
+    }
+
+    fun sortIndex(name: String): Int {
+        val canonical = canonicalizeOrNull(name) ?: return schools.size + 1
+        return schools.indexOf(canonical).takeIf { it >= 0 } ?: schools.size + 1
+    }
+}
+
+data class SpellUsability(
+    val usable: Boolean,
+    val requiredPower: Int,
+    val schools: List<String>,
+    val qualifyingSchool: String? = null,
+)
+
 data class GearItem(
     val uid: String,
     val catalogId: String? = null,
@@ -123,7 +184,7 @@ object MagicEquipmentRules {
 
     fun manaMaximum(character: DublCharacter): Int {
         val rank = character.magic.manaRank.coerceIn(0, 5)
-        val power = character.magic.power.coerceAtLeast(0)
+        val power = highestMagicPower(character)
         if (rank <= 0 || power <= 0) return 0
         val basePower = power.coerceAtMost(20)
         var value = manaTable[basePower - 1][rank - 1]
@@ -133,6 +194,43 @@ object MagicEquipmentRules {
         val increasedManaRank = character.development[INCREASED_MANA_ENTRY_ID]?.rank ?: 0
         return max(0, value + increasedManaRank * rank)
     }
+
+    fun highestMagicPower(character: DublCharacter): Int {
+        val schoolPower = character.magic.schools
+            .filter { MagicSchoolCatalog.canonicalizeOrNull(it.name) != null }
+            .maxOfOrNull { it.rank.coerceAtLeast(0) } ?: 0
+        return if (schoolPower > 0) schoolPower else character.magic.power.coerceAtLeast(0)
+    }
+
+    fun magicSchoolPowerXp(character: DublCharacter): Int = character.magic.schools
+        .filter { MagicSchoolCatalog.canonicalizeOrNull(it.name) != null }
+        .sumOf { it.rank.coerceAtLeast(0) * 25 }
+
+    fun schoolPower(character: DublCharacter, schoolName: String): Int {
+        val canonical = MagicSchoolCatalog.canonicalizeOrNull(schoolName) ?: return 0
+        return character.magic.schools
+            .filter { MagicSchoolCatalog.canonicalizeOrNull(it.name) == canonical }
+            .maxOfOrNull { it.rank.coerceAtLeast(0) } ?: 0
+    }
+
+    fun spellUsability(character: DublCharacter, spell: KnownSpell): SpellUsability {
+        val schools = MagicSchoolCatalog.parseSchools(spell.school)
+        val required = spell.cost.coerceAtLeast(0)
+        if (required == 0) return SpellUsability(true, 0, schools, schools.firstOrNull())
+        val qualifying = schools.firstOrNull { schoolPower(character, it) >= required }
+        return SpellUsability(
+            usable = qualifying != null,
+            requiredPower = required,
+            schools = schools,
+            qualifyingSchool = qualifying,
+        )
+    }
+
+    fun spellUsability(character: DublCharacter, spell: SpellCatalogEntry): SpellUsability =
+        spellUsability(
+            character,
+            KnownSpell(uid = spell.id, name = spell.name, school = spell.school, cost = spell.cost),
+        )
 
     fun manaRecoveryPerRound(character: DublCharacter): Int =
         1 + (character.development[MEDITATION_ENTRY_ID]?.rank ?: 0)

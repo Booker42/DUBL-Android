@@ -154,4 +154,22 @@ class CharacterEconomyTest {
         assertEquals(-30, economy.remainingXp)
         assertTrue(economy.overspentXp)
     }
+    @Test
+    fun magicSchoolPowerXpIsPartOfTotalSpentExperience() {
+        val character = DublCharacter(
+            id = "magic-school-xp",
+            experience = 1000,
+            magic = CharacterMagic(
+                schools = listOf(
+                    MagicSchool("Разрушение", 4),
+                    MagicSchool("Ограждение", 2),
+                ),
+            ),
+        )
+        val economy = CharacterEconomy.breakdown(character, catalog)
+        assertEquals(150, economy.magicSchoolXp)
+        assertEquals(150, economy.spentXp)
+        assertEquals(850, economy.remainingXp)
+    }
+
 }

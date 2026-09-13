@@ -7,6 +7,7 @@ import com.dubl.character.android.model.AttributeValue
 import com.dubl.character.android.model.CharacterGear
 import com.dubl.character.android.model.CharacterMagic
 import com.dubl.character.android.model.CharacterSkill
+import com.dubl.character.android.model.CustomResource
 import com.dubl.character.android.model.GearItem
 import com.dubl.character.android.model.KnownSpell
 import com.dubl.character.android.model.MagicSchool
@@ -42,7 +43,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 5)
+        put("schema", 6)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -65,6 +66,19 @@ class CharacterRepository(context: Context) {
         put("manaEnabled", character.manaEnabled)
         put("manaCurrent", character.manaCurrent)
         put("manaMaximum", character.manaMaximum)
+        character.healthMaximumOverride?.let { put("healthMaximumOverride", it) }
+        character.enduranceMaximumOverride?.let { put("enduranceMaximumOverride", it) }
+        character.manaMaximumOverride?.let { put("manaMaximumOverride", it) }
+        put("customResources", JSONArray().apply {
+            character.customResources.forEach { resource ->
+                put(JSONObject().apply {
+                    put("uid", resource.uid)
+                    put("name", resource.name)
+                    put("current", resource.current)
+                    put("maximum", resource.maximum)
+                })
+            }
+        })
         put("attributes", JSONObject().apply {
             character.attributes.forEach { (id, value) ->
                 put(id.name, JSONObject().apply {
@@ -225,6 +239,21 @@ class CharacterRepository(context: Context) {
 
         val magic = decodeMagic(root.optJSONObject("magic"))
         val gear = decodeGear(root.optJSONObject("gear"))
+        val customResources = buildList {
+            val array = root.optJSONArray("customResources") ?: JSONArray()
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val uid = item.optString("uid").ifBlank { UUID.randomUUID().toString() }
+                add(
+                    CustomResource(
+                        uid = uid,
+                        name = item.optString("name", "Ресурс"),
+                        current = item.optInt("current", 0),
+                        maximum = item.optInt("maximum", 0),
+                    )
+                )
+            }
+        }
 
         val experience = root.optInt("experience", 0).coerceAtLeast(0)
         val creationExperience = if (root.has("creationExperience")) {
@@ -259,6 +288,10 @@ class CharacterRepository(context: Context) {
             manaEnabled = root.optBoolean("manaEnabled", false),
             manaCurrent = root.optInt("manaCurrent", 0),
             manaMaximum = root.optInt("manaMaximum", 0),
+            healthMaximumOverride = if (root.has("healthMaximumOverride") && !root.isNull("healthMaximumOverride")) root.optInt("healthMaximumOverride") else null,
+            enduranceMaximumOverride = if (root.has("enduranceMaximumOverride") && !root.isNull("enduranceMaximumOverride")) root.optInt("enduranceMaximumOverride") else null,
+            manaMaximumOverride = if (root.has("manaMaximumOverride") && !root.isNull("manaMaximumOverride")) root.optInt("manaMaximumOverride") else null,
+            customResources = customResources,
             skills = skills,
             hiddenSkillIds = hidden,
             development = development,

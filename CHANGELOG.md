@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 — Custom resources and school magic
+
+- Added manual maximum overrides for Health, Endurance, and Mana with reset-to-formula behavior.
+- Added persistent custom resources with editable name, current value, and maximum.
+- Reworked Magic Power into separate canonical school values at 25 XP per level.
+- Added the rulebook school catalog, canonical aliases, consistent school ordering, and school filters for spells.
+- Spell usability now checks mana cost against the matching school power; spells can still be learned when currently unusable and are clearly marked.
+- Added school Magic Power XP to the shared character XP economy.
+- Preserved legacy global Magic Power only as a migration fallback until school power is configured.
+- Compressed favorite skill rows on the Character sheet to name, rank, and total bonus.
+- Added acquired Development/Feat entries with descriptions below favorite skills on the Character sheet.
+- Bumped the default Android version to `0.3.1`.
+
 ## 0.2 — Integration, stabilization, and polish
 
 - Integrated Skills, Development, Magic, and Equipment with shared character persistence and connected them to the Character sheet.

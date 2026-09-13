@@ -542,7 +542,7 @@ private fun DevelopmentBudgetCard(economy: CharacterEconomyBreakdown) {
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             Text(
-                "Характеристики ${economy.attributeXp} · Умения ${economy.skillXp} · Навыки ${economy.developmentXp} · Магия ${economy.manaXp + economy.spellXp}" +
+                "Характеристики ${economy.attributeXp} · Умения ${economy.skillXp} · Навыки ${economy.developmentXp} · Магия ${economy.manaXp + economy.magicSchoolXp + economy.spellXp}" +
                     if (economy.adjustmentXp != 0) " · Поправка ${economy.adjustmentXp}" else "",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

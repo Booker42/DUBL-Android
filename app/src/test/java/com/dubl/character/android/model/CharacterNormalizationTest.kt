@@ -34,10 +34,8 @@ class CharacterNormalizationTest {
         val normalized = character.normalized()
 
         assertEquals(5, normalized.magic.manaRank)
-        assertEquals(1, normalized.magic.power)
-        assertEquals("Школа", normalized.magic.schools.single().name)
-        assertEquals(0, normalized.magic.schools.single().rank)
-        assertEquals("note", normalized.magic.schools.single().note)
+        assertEquals(0, normalized.magic.power)
+        assertTrue(normalized.magic.schools.isEmpty())
         assertEquals(1, normalized.magic.spells.size)
         assertEquals("Заклинание", normalized.magic.spells.single().name)
         assertEquals(0, normalized.magic.spells.single().cost)
@@ -87,6 +85,33 @@ class CharacterNormalizationTest {
         assertEquals(3, character.magic.manaRank)
         assertFalse(character.development.containsKey(MagicEquipmentRules.BASE_MANA_ENTRY_ID))
         assertTrue(character.manaEnabled)
+    }
+
+    @Test
+    fun manualMaximumOverridesAndCustomResourcesAreNormalized() {
+        val character = DublCharacter(
+            id = "resources",
+            healthMaximumOverride = 42,
+            enduranceMaximumOverride = 7,
+            manaMaximumOverride = 33,
+            hpCurrent = 99,
+            enduranceCurrent = 99,
+            manaCurrent = 99,
+            customResources = listOf(
+                CustomResource(uid = "chi", name = "  Ци  ", current = 20, maximum = 12),
+                CustomResource(uid = "chi", name = "duplicate", current = 1, maximum = 1),
+            ),
+        ).normalized()
+
+        assertEquals(42, character.healthMaximum)
+        assertEquals(7, character.enduranceMaximum)
+        assertEquals(33, character.effectiveManaMaximum)
+        assertEquals(42, character.hpCurrent)
+        assertEquals(7, character.enduranceCurrent)
+        assertEquals(33, character.manaCurrent)
+        assertEquals(1, character.customResources.size)
+        assertEquals("Ци", character.customResources.single().name)
+        assertEquals(12, character.customResources.single().current)
     }
 
 }

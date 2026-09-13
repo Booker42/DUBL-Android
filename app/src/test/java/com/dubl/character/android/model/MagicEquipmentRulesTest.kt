@@ -1,6 +1,7 @@
 package com.dubl.character.android.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -76,6 +77,43 @@ class MagicEquipmentRulesTest {
         assertTrue(rules.availability(entry).canIncrease)
     }
     @Test
+    fun developmentRequirementsUseStrongestConfiguredSchoolPower() {
+        val entry = DevelopmentEntry(
+            id = "school-magic-gated",
+            name = "Школьная магия",
+            section = "Тест",
+            category = "Тест",
+            cost = 10,
+            costType = DevelopmentCostType.XP,
+            maxRank = 1,
+            requirements = "Сила магии 4",
+            benefit = "",
+            notes = "",
+            tags = emptyList(),
+            accessId = null,
+            abilityOptions = emptyList(),
+            incomplete = false,
+            repeatable = false,
+            perfectRoot = false,
+            mechanicsConflict = "",
+            conflictNote = "",
+        )
+        val character = DublCharacter(
+            id = "school-magic-req",
+            magic = CharacterMagic(
+                power = 99,
+                schools = listOf(
+                    MagicSchool("Ограждение", 2),
+                    MagicSchool("Разрушение", 4),
+                ),
+            ),
+        ).normalized()
+
+        val rules = DevelopmentRules(character, DevelopmentCatalog("test", listOf(entry)), DevelopmentProgress())
+        assertTrue(rules.requirements(entry).all { it.status == RequirementStatus.OK })
+    }
+
+    @Test
     fun catalogGearLoadUsesWeightInsteadOfRequirement() {
         val entry = GearCatalogEntry(
             id = "bow",
@@ -105,5 +143,83 @@ class MagicEquipmentRulesTest {
         assertEquals(0.0, MagicEquipmentRules.catalogGearLoad(entry()), 0.001)
     }
 
+
+    @Test
+    fun schoolPowerCosts25XpPerLevelAndHighestSchoolDrivesManaTable() {
+        val character = DublCharacter(
+            id = "school-power",
+            magic = CharacterMagic(
+                manaRank = 2,
+                power = 99,
+                schools = listOf(
+                    MagicSchool("Разрушение", 6),
+                    MagicSchool("Ограждение", 3),
+                ),
+            ),
+        )
+
+        assertEquals(225, MagicEquipmentRules.magicSchoolPowerXp(character))
+        assertEquals(6, MagicEquipmentRules.highestMagicPower(character))
+        assertEquals(13, MagicEquipmentRules.manaMaximum(character))
+    }
+
+    @Test
+    fun spellCanBeLearnedButUsabilityDependsOnAnyMatchingSchoolPower() {
+        val character = DublCharacter(
+            id = "spell-school",
+            magic = CharacterMagic(
+                schools = listOf(
+                    MagicSchool("Разрушение", 5),
+                    MagicSchool("Воплощение", 6),
+                ),
+            ),
+        )
+        val spell = KnownSpell(
+            uid = "spell",
+            name = "Тест",
+            school = "Разрушение / Воплощение",
+            cost = 6,
+            learned = true,
+        )
+
+        val usable = MagicEquipmentRules.spellUsability(character, spell)
+        assertTrue(usable.usable)
+        assertEquals(listOf("Воплощение", "Разрушение"), usable.schools)
+        assertEquals("Воплощение", usable.qualifyingSchool)
+
+        val weak = character.copy(
+            magic = character.magic.copy(schools = listOf(MagicSchool("Разрушение", 5))),
+        )
+        val blocked = MagicEquipmentRules.spellUsability(weak, spell)
+        assertFalse(blocked.usable)
+        assertEquals(6, blocked.requiredPower)
+    }
+
+    @Test
+    fun schoolNamesFromRulebookAreCanonicalizedForFilteringAndRequirements() {
+        assertEquals("Ограждение", MagicSchoolCatalog.canonicalize("Ограждения"))
+        assertEquals("Молитва", MagicSchoolCatalog.canonicalize("Молитвы"))
+        assertEquals("Некромантия", MagicSchoolCatalog.canonicalize("Некромант"))
+        assertEquals(
+            listOf("Магия крови", "Некромантия"),
+            MagicSchoolCatalog.parseSchools("Некромантия (Магия крови)"),
+        )
+    }
+
+    @Test
+    fun unknownLegacySchoolDoesNotAffectSchoolPowerEconomy() {
+        val character = DublCharacter(
+            id = "legacy-school",
+            magic = CharacterMagic(
+                manaRank = 1,
+                power = 2,
+                schools = listOf(MagicSchool("Старая кастомная школа", 20)),
+            ),
+        )
+
+        assertEquals(0, MagicEquipmentRules.magicSchoolPowerXp(character))
+        assertEquals(2, MagicEquipmentRules.highestMagicPower(character))
+        assertEquals(2, MagicEquipmentRules.manaMaximum(character))
+    }
 
 }

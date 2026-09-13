@@ -442,7 +442,7 @@ class DevelopmentRules(
                 val actual = maxOf(skillRank("Холодное оружие"), skillRank("Рукопашный бой"))
                 return valueCheck(originalName, actual, need)
             }
-            "сила магии", "сила заклинаний" -> return valueCheck(originalName, character.magic.power, need)
+            "сила магии", "сила заклинаний" -> return valueCheck(originalName, MagicEquipmentRules.highestMagicPower(character), need)
         }
 
         if (normalizedName.startsWith("любые два умения")) {
