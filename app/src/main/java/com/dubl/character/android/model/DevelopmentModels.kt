@@ -32,6 +32,10 @@ data class DevelopmentEntry(
 ) {
     val isAbility: Boolean get() = costType == DevelopmentCostType.ABILITY
 
+    val isMartialArt: Boolean
+        get() = developmentNormalize(section) == "боевые искусства" ||
+            tags.any { developmentNormalize(it) == "боевые искусства" }
+
     /**
      * Special development is intentionally broader than accessId != null.
      * Some rulebook branches (perfect abilities / animagia / entropy) are XP-only
@@ -39,10 +43,10 @@ data class DevelopmentEntry(
      * to the special-branch catalogue rather than the ordinary feat list.
      */
     val isSpecialDevelopment: Boolean
-        get() = isAbility || accessId != null || developmentNormalize(section) == "ветки способностей"
+        get() = !isMartialArt && (isAbility || accessId != null || developmentNormalize(section) == "ветки способностей")
 
     val isRegularDevelopment: Boolean
-        get() = !isSpecialDevelopment && costType == DevelopmentCostType.XP
+        get() = !isMartialArt && !isSpecialDevelopment && costType == DevelopmentCostType.XP
 }
 
 data class OwnedDevelopment(
@@ -333,8 +337,7 @@ class DevelopmentRules(
 
         val raw = entry.requirements.trim(' ', '.', ',', ';')
         if (raw.isNotBlank() && raw != "-" && raw != "—") {
-            val parts = raw.split(Regex("[,;\\n]+(?![^()]*\\))"))
-            parts.filter { it.isNotBlank() }.forEach { part ->
+            requirementParts(raw).forEach { part ->
                 checks += checkAtom(part, entry, nextSeen)
             }
         }
@@ -376,6 +379,8 @@ class DevelopmentRules(
         if (Regex("на усмотрение|согласован", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
             return RequirementCheck(RequirementStatus.MANUAL, text)
         }
+
+        martialArtsRequirement(text, seen)?.let { return it }
 
         if (Regex("\\sили\\s", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
             val parts = text.split(Regex("\\s+или\\s+", RegexOption.IGNORE_CASE))
@@ -489,6 +494,129 @@ class DevelopmentRules(
         }
 
         return RequirementCheck(RequirementStatus.MANUAL, text)
+    }
+
+    private fun requirementParts(raw: String): List<String> = raw
+        .split(Regex("[;\\n]+"))
+        .flatMap { segment ->
+            val clean = segment.trim()
+            if (Regex("^Боевые\\s+искусства\\s*:", RegexOption.IGNORE_CASE).containsMatchIn(clean)) {
+                splitMartialColonSegment(clean)
+            } else {
+                clean.split(Regex(",+(?![^()]*\\))"))
+            }
+        }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+
+    private fun splitMartialColonSegment(segment: String): List<String> {
+        val prefix = segment.substringBefore(':').trim()
+        val body = segment.substringAfter(':').trim()
+        val commaParts = body.split(Regex(",+(?![^()]*\\))"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (commaParts.size <= 1) return listOf(segment)
+
+        val martialParts = mutableListOf<String>()
+        val trailingRequirements = mutableListOf<String>()
+        var martialListClosed = false
+
+        commaParts.forEach { rawPart ->
+            val cleanPart = rawPart.trim(' ', '.', ';')
+            val withoutLeadingOr = cleanPart.replaceFirst(Regex("^или\\s+", RegexOption.IGNORE_CASE), "").trim()
+            val knownNonMartial = catalog.matchingName(withoutLeadingOr).any { !it.isMartialArt }
+            val numericRequirement = Regex(".*\\s\\d+(?:\\s*ранг(?:а|ов)?)?$", RegexOption.IGNORE_CASE).matches(withoutLeadingOr)
+            val knownSkill = allSkills.any { developmentAlias(it.name) == developmentAlias(withoutLeadingOr) }
+            val shouldBeTrailing = martialListClosed || knownNonMartial || numericRequirement || knownSkill
+
+            if (shouldBeTrailing) {
+                martialListClosed = true
+                trailingRequirements += cleanPart
+            } else {
+                martialParts += cleanPart
+                if (Regex("\\s+или\\s+", RegexOption.IGNORE_CASE).containsMatchIn(cleanPart)) {
+                    martialListClosed = true
+                }
+            }
+        }
+
+        if (trailingRequirements.isEmpty() || martialParts.isEmpty()) return listOf(segment)
+        return listOf("$prefix: ${martialParts.joinToString(", ")}") + trailingRequirements
+    }
+
+    private fun martialArtsRequirement(text: String, seen: Set<String>): RequirementCheck? {
+        val match = Regex(
+            "^Боевые\\s+искусства\\s*(?:\\(([^)]+)\\)|:\\s*(.+))$",
+            RegexOption.IGNORE_CASE,
+        ).matchEntire(text) ?: return null
+
+        val rawStyles = match.groupValues[1].ifBlank { match.groupValues[2] }.trim()
+        val requested = rawStyles
+            .split(Regex("\\s*,\\s*|\\s+или\\s+", RegexOption.IGNORE_CASE))
+            .map { it.trim(' ', '.', ',') }
+            .filter { it.isNotBlank() }
+
+        val ownedStyles = catalog.entries.filter { candidate ->
+            candidate.isMartialArt &&
+                candidate.tags.any { developmentNormalize(it) == "боевой стиль" } &&
+                progress.rank(candidate.id) > 0
+        }
+
+        if (requested.any { developmentNormalize(it) == "любое" }) {
+            val validOwned = ownedStyles.firstOrNull { candidate ->
+                candidate.id !in seen && requirementsInternal(candidate, seen + candidate.id)
+                    .all { it.status == RequirementStatus.OK }
+            }
+            return RequirementCheck(
+                status = if (validOwned != null) RequirementStatus.OK else RequirementStatus.FAIL,
+                text = if (validOwned != null) {
+                    "Боевые искусства (любое): ${validOwned.name}"
+                } else {
+                    "Боевые искусства (любое): не изучено"
+                },
+                targetEntryId = validOwned?.id,
+            )
+        }
+
+        val knownStyles = requested.flatMap { styleName ->
+            catalog.matchingName(styleName).filter { candidate ->
+                candidate.isMartialArt && candidate.tags.any { developmentNormalize(it) == "боевой стиль" }
+            }
+        }.distinctBy { it.id }
+
+        if (knownStyles.isEmpty()) {
+            return RequirementCheck(RequirementStatus.MANUAL, text)
+        }
+
+        val validOwned = knownStyles.firstOrNull { candidate ->
+            progress.rank(candidate.id) > 0 &&
+                candidate.id !in seen &&
+                requirementsInternal(candidate, seen + candidate.id).all { it.status == RequirementStatus.OK }
+        }
+        if (validOwned != null) {
+            return RequirementCheck(RequirementStatus.OK, text, validOwned.id)
+        }
+
+        val ownedButInvalid = knownStyles.firstOrNull { progress.rank(it.id) > 0 }
+        if (ownedButInvalid != null) {
+            val previous = requirementsInternal(ownedButInvalid, seen + ownedButInvalid.id)
+            val status = if (previous.any { it.status == RequirementStatus.FAIL }) {
+                RequirementStatus.FAIL
+            } else {
+                RequirementStatus.MANUAL
+            }
+            return RequirementCheck(
+                status,
+                "$text: проверьте требования выбранного боевого стиля",
+                ownedButInvalid.id,
+            )
+        }
+
+        return RequirementCheck(
+            RequirementStatus.FAIL,
+            "$text: ни один подходящий стиль не изучен",
+            knownStyles.first().id,
+        )
     }
 
     private fun numericRequirement(

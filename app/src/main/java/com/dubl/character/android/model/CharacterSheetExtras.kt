@@ -102,6 +102,7 @@ enum class CharacterSheetResourceId(val title: String) {
     HEALTH("Здоровье"),
     ENDURANCE("Выносливость"),
     MANA("Мана"),
+    CHI("ЦИ"),
 }
 
 data class CharacterSheetExtras(

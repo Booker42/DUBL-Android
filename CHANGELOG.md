@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4 — Martial arts, Chi, and Archmage expansion
+
+- Added Martial Arts as a dedicated Development tab and XP-only progression domain, separate from ordinary and special development.
+- Imported 19 approved unarmed/weapon martial styles and 103 unique techniques from the Master of Melee rulebook, including table-based stances and Gun Kata techniques.
+- Added martial-style prerequisite handling for named alternatives and “any martial art” requirements without consuming Ability Points.
+- Added persistent Chi as an optional character resource with a base pool of `max(3, Will + 1)` and up to 10 bonus ranks at 50 XP each.
+- Added a dedicated Chi tab with current/max controls, bonus-rank purchasing, full restore, and short/long-rest rule reminders.
+- Added enabled Chi to the main Character resource strip for fast in-play spending and recovery.
+- Added Chi purchases to the shared character XP economy and bumped character persistence to schema 7.
+- Imported 54 additional Archmage spells only for already-supported schools: Warding, Divination, Prayer, and Mind.
+- Kept Illusion, Elementalistics, Mana Well, Wild Magic, and other experimental Archmage systems out of this release.
+- Added deterministic 0.4 content import tooling for repeatable rulebook-to-catalog updates without duplicate entries.
+- Bumped the default Android version to `0.4`.
+
 ## 0.3.2.1 — Bottom-sheet gesture and toggle visibility hotfix
 
 - Restored normal drag gestures for modal bottom sheets.

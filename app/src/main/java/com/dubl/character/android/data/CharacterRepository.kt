@@ -43,7 +43,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 6)
+        put("schema", 7)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -66,6 +66,9 @@ class CharacterRepository(context: Context) {
         put("manaEnabled", character.manaEnabled)
         put("manaCurrent", character.manaCurrent)
         put("manaMaximum", character.manaMaximum)
+        put("chiEnabled", character.chiEnabled)
+        put("chiCurrent", character.chiCurrent)
+        put("chiBonusRanks", character.chiBonusRanks)
         character.healthMaximumOverride?.let { put("healthMaximumOverride", it) }
         character.enduranceMaximumOverride?.let { put("enduranceMaximumOverride", it) }
         character.manaMaximumOverride?.let { put("manaMaximumOverride", it) }
@@ -288,6 +291,9 @@ class CharacterRepository(context: Context) {
             manaEnabled = root.optBoolean("manaEnabled", false),
             manaCurrent = root.optInt("manaCurrent", 0),
             manaMaximum = root.optInt("manaMaximum", 0),
+            chiEnabled = root.optBoolean("chiEnabled", false),
+            chiCurrent = root.optInt("chiCurrent", 0),
+            chiBonusRanks = root.optInt("chiBonusRanks", 0),
             healthMaximumOverride = if (root.has("healthMaximumOverride") && !root.isNull("healthMaximumOverride")) root.optInt("healthMaximumOverride") else null,
             enduranceMaximumOverride = if (root.has("enduranceMaximumOverride") && !root.isNull("enduranceMaximumOverride")) root.optInt("enduranceMaximumOverride") else null,
             manaMaximumOverride = if (root.has("manaMaximumOverride") && !root.isNull("manaMaximumOverride")) root.optInt("manaMaximumOverride") else null,

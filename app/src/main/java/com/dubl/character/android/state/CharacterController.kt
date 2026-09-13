@@ -73,11 +73,13 @@ class CharacterController(private val repository: CharacterRepository) {
         if (character.creationComplete) return@updateActive character
         val creationXp = character.effectiveCreationExperience.coerceAtMost(character.experience)
         val fullMana = if (character.manaEnabled || character.magic.manaRank > 0) character.effectiveManaMaximum else character.manaCurrent
+        val fullChi = if (character.chiEnabled) character.chiMaximum else character.chiCurrent
         character.copy(
             creationExperience = creationXp,
             creationComplete = true,
             hpCurrent = character.healthMaximum,
             manaCurrent = fullMana,
+            chiCurrent = fullChi,
         )
     }
 
@@ -88,6 +90,31 @@ class CharacterController(private val repository: CharacterRepository) {
     fun changeHp(delta: Int) = updateActive { it.copy(hpCurrent = it.hpCurrent + delta) }
     fun changeEndurance(delta: Int) = updateActive { it.copy(enduranceCurrent = it.enduranceCurrent + delta) }
     fun changeMana(delta: Int) = updateActive { it.copy(manaCurrent = it.manaCurrent + delta) }
+    fun changeChi(delta: Int) = updateActive { it.copy(chiCurrent = it.chiCurrent + delta) }
+
+    fun setChiEnabled(enabled: Boolean) = updateActive { character ->
+        if (!enabled) {
+            character.copy(chiEnabled = false, chiCurrent = 0)
+        } else {
+            val enabledCharacter = character.copy(chiEnabled = true)
+            enabledCharacter.copy(
+                chiCurrent = if (!character.chiEnabled) enabledCharacter.chiMaximum else character.chiCurrent,
+            )
+        }
+    }
+
+    fun setChiBonusRanks(rank: Int) = updateActive { character ->
+        val next = character.copy(chiBonusRanks = rank.coerceIn(0, 10))
+        if (!character.creationComplete && next.chiEnabled) {
+            next.copy(chiCurrent = next.chiMaximum)
+        } else {
+            next
+        }
+    }
+
+    fun restoreChi() = updateActive { character ->
+        if (character.chiEnabled) character.copy(chiCurrent = character.chiMaximum) else character
+    }
 
     fun setHealthMaximumOverride(value: Int?) = updateActive { character ->
         character.copy(healthMaximumOverride = value?.coerceAtLeast(0))

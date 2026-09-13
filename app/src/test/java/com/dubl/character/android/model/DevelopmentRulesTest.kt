@@ -307,4 +307,135 @@ class DevelopmentRulesTest {
         assertEquals(1, special[1].depth)
     }
 
+    @Test
+    fun martialArtsAreASeparateDevelopmentDomain() {
+        val martial = child.copy(
+            id = "martial-aikido",
+            name = "Айкидо",
+            section = "Боевые искусства",
+            category = "Рукопашные",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            tags = listOf("Боевые искусства", "Боевой стиль"),
+        )
+
+        assertTrue(martial.isMartialArt)
+        assertFalse(martial.isRegularDevelopment)
+        assertFalse(martial.isSpecialDevelopment)
+    }
+
+    @Test
+    fun martialArtAlternativeListRequiresAnyOneListedStyle() {
+        val aikido = child.copy(
+            id = "martial-aikido",
+            name = "Айкидо",
+            section = "Боевые искусства",
+            category = "Рукопашные",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "-",
+            tags = listOf("Боевые искусства", "Боевой стиль"),
+        )
+        val hapkido = aikido.copy(id = "martial-hapkido", name = "Хапкидо")
+        val monkey = aikido.copy(id = "martial-monkey", name = "Обезьяна")
+        val technique = child.copy(
+            id = "martial-throw",
+            name = "Импульсный бросок",
+            section = "Боевые искусства",
+            category = "Общие приёмы",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "Боевые искусства: Айкидо, Хапкидо, Обезьяна или Ниндзюцу",
+            tags = listOf("Боевые искусства", "Приём"),
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(aikido, hapkido, monkey, technique))
+        val progress = DevelopmentProgress(mapOf(hapkido.id to OwnedDevelopment(rank = 1)))
+        val rules = DevelopmentRules(character(), localCatalog, progress)
+
+        assertTrue(rules.availability(technique).canIncrease)
+        assertTrue(rules.requirements(technique).all { it.status == RequirementStatus.OK })
+    }
+
+    @Test
+    fun anyMartialArtRequirementAcceptsAnyOwnedStyle() {
+        val boxing = child.copy(
+            id = "martial-boxing",
+            name = "Бокс",
+            section = "Боевые искусства",
+            category = "Рукопашные",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "-",
+            tags = listOf("Боевые искусства", "Боевой стиль"),
+        )
+        val escape = child.copy(
+            id = "martial-escape",
+            name = "Ускользание",
+            section = "Боевые искусства",
+            category = "Общие приёмы",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "Боевые искусства (Любое)",
+            tags = listOf("Боевые искусства", "Приём"),
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(boxing, escape))
+        val progress = DevelopmentProgress(mapOf(boxing.id to OwnedDevelopment(rank = 1)))
+        val rules = DevelopmentRules(character(), localCatalog, progress)
+
+        assertTrue(rules.availability(escape).canIncrease)
+        assertTrue(rules.requirements(escape).all { it.status == RequirementStatus.OK })
+    }
+
+    @Test
+    fun martialArtAlternativeListDoesNotSwallowTrailingFeatRequirement() {
+        val boxing = child.copy(
+            id = "martial-boxing",
+            name = "Бокс",
+            section = "Боевые искусства",
+            category = "Рукопашные",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "-",
+            tags = listOf("Боевые искусства", "Боевой стиль"),
+        )
+        val tiger = boxing.copy(id = "martial-tiger", name = "Тигр")
+        val powerStrike = child.copy(
+            id = "power-strike",
+            name = "Мощный удар",
+            section = "Навыки",
+            category = "Бой",
+            accessId = null,
+            requirements = "-",
+        )
+        val technique = child.copy(
+            id = "martial-body-blow",
+            name = "Удары в корпус",
+            section = "Боевые искусства",
+            category = "Общие приёмы",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "Боевые искусства: Бокс или Тигр, Мощный удар",
+            tags = listOf("Боевые искусства", "Приём"),
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(boxing, tiger, powerStrike, technique))
+        val missingFeat = DevelopmentRules(
+            character(),
+            localCatalog,
+            DevelopmentProgress(mapOf(boxing.id to OwnedDevelopment(rank = 1))),
+        )
+        assertFalse(missingFeat.availability(technique).canIncrease)
+
+        val complete = DevelopmentRules(
+            character(),
+            localCatalog,
+            DevelopmentProgress(
+                mapOf(
+                    boxing.id to OwnedDevelopment(rank = 1),
+                    powerStrike.id to OwnedDevelopment(rank = 1),
+                )
+            ),
+        )
+        assertTrue(complete.availability(technique).canIncrease)
+    }
+
 }

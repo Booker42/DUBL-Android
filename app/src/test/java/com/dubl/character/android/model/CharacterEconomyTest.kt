@@ -172,4 +172,19 @@ class CharacterEconomyTest {
         assertEquals(850, economy.remainingXp)
     }
 
+    @Test
+    fun chiBonusRanksCostFiftyXpEach() {
+        val character = DublCharacter(
+            id = "chi-xp",
+            experience = 1000,
+            chiEnabled = true,
+            chiBonusRanks = 3,
+        ).normalized()
+
+        val economy = CharacterEconomy.breakdown(character, catalog)
+        assertEquals(150, economy.chiXp)
+        assertEquals(150, economy.spentXp)
+        assertEquals(850, economy.remainingXp)
+    }
+
 }

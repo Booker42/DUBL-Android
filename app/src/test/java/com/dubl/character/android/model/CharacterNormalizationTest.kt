@@ -114,4 +114,45 @@ class CharacterNormalizationTest {
         assertEquals(12, character.customResources.single().current)
     }
 
+    @Test
+    fun chiIsDisabledByDefaultAndHasNoPool() {
+        val character = DublCharacter(id = "chi-off").normalized()
+
+        assertFalse(character.chiEnabled)
+        assertEquals(0, character.chiCurrent)
+        assertEquals(0, character.chiMaximum)
+    }
+
+    @Test
+    fun chiBasePoolUsesWillPlusOneWithMinimumThree() {
+        val lowWill = DublCharacter(
+            id = "chi-low-will",
+            chiEnabled = true,
+            attributes = defaultAttributes() + (AttributeId.WILL to AttributeValue(base = 1)),
+        ).normalized()
+        val trainedWill = DublCharacter(
+            id = "chi-trained-will",
+            chiEnabled = true,
+            attributes = defaultAttributes() + (AttributeId.WILL to AttributeValue(base = 4)),
+        ).normalized()
+
+        assertEquals(3, lowWill.chiMaximum)
+        assertEquals(5, trainedWill.chiMaximum)
+    }
+
+    @Test
+    fun chiBonusRanksAddToPoolAndClampCurrentAndRanks() {
+        val character = DublCharacter(
+            id = "chi-ranked",
+            chiEnabled = true,
+            chiCurrent = 99,
+            chiBonusRanks = 99,
+            attributes = defaultAttributes() + (AttributeId.WILL to AttributeValue(base = 4)),
+        ).normalized()
+
+        assertEquals(10, character.chiBonusRanks)
+        assertEquals(15, character.chiMaximum)
+        assertEquals(15, character.chiCurrent)
+    }
+
 }

@@ -59,6 +59,7 @@ import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublScreenHeader
+import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublDanger
 import com.dubl.character.android.ui.theme.DublGold
@@ -66,6 +67,8 @@ import com.dubl.character.android.ui.theme.DublGold
 private enum class DevelopmentTab(val title: String) {
     REGULAR("Обычные"),
     SPECIAL("Спец. ветки"),
+    MARTIAL_ARTS("Боевые искусства"),
+    CHI("ЦИ"),
     OWNED("Взято"),
 }
 
@@ -143,6 +146,8 @@ fun FeatsScreen(controller: CharacterController) {
                 when (tab) {
                     DevelopmentTab.REGULAR -> entry.isRegularDevelopment
                     DevelopmentTab.SPECIAL -> entry.isSpecialDevelopment
+                    DevelopmentTab.MARTIAL_ARTS -> entry.isMartialArt
+                    DevelopmentTab.CHI -> false
                     DevelopmentTab.OWNED -> progress.rank(entry.id) > 0
                 }
             }
@@ -184,7 +189,7 @@ fun FeatsScreen(controller: CharacterController) {
         item {
             DublScreenHeader(
                 title = "Навыки",
-                subtitle = "Развитие, спец. ветки и полученные навыки",
+                subtitle = "Развитие, боевые искусства, ЦИ и спец. ветки",
             )
         }
 
@@ -225,76 +230,95 @@ fun FeatsScreen(controller: CharacterController) {
             }
         }
 
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = {
-                    Text(
-                        when (tab) {
-                            DevelopmentTab.REGULAR -> "Поиск обычного навыка"
-                            DevelopmentTab.SPECIAL -> "Поиск спец. ветки или навыка"
-                            DevelopmentTab.OWNED -> "Поиск среди взятых"
-                        }
-                    )
-                },
-                singleLine = true,
-            )
-        }
-
-        if (tab != DevelopmentTab.OWNED) {
+        if (tab == DevelopmentTab.CHI) {
             item {
-                FilterChip(
-                    selected = availableOnly,
-                    onClick = { availableOnly = !availableOnly },
-                    label = { Text("Доступно сейчас") },
+                ChiDevelopmentCard(
+                    enabled = character.chiEnabled,
+                    current = character.chiCurrent,
+                    maximum = character.chiMaximum,
+                    baseMaximum = maxOf(3, character.will + 1),
+                    bonusRanks = character.chiBonusRanks,
+                    onToggle = controller::setChiEnabled,
+                    onChangeCurrent = controller::changeChi,
+                    onChangeBonusRanks = { delta -> controller.setChiBonusRanks(character.chiBonusRanks + delta) },
+                    onRestore = controller::restoreChi,
                 )
             }
-        }
-
-        item {
-            Text(
-                when (tab) {
-                    DevelopmentTab.REGULAR -> "Обычных навыков: ${filteredEntries.size}"
-                    DevelopmentTab.SPECIAL -> "Записей спец. веток: ${filteredEntries.size}"
-                    DevelopmentTab.OWNED -> "Взято: ${filteredEntries.size}"
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        if (filteredEntries.isEmpty()) {
+        } else {
             item {
-                DublCard(Modifier.fillMaxWidth()) {
-                    Text(
-                        if (tab == DevelopmentTab.OWNED) "Пока ничего не взято" else "Ничего не найдено",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text(
+                            when (tab) {
+                                DevelopmentTab.REGULAR -> "Поиск обычного навыка"
+                                DevelopmentTab.SPECIAL -> "Поиск спец. ветки или навыка"
+                                DevelopmentTab.MARTIAL_ARTS -> "Поиск стиля или приёма"
+                                DevelopmentTab.CHI -> ""
+                                DevelopmentTab.OWNED -> "Поиск среди взятых"
+                            }
+                        )
+                    },
+                    singleLine = true,
+                )
+            }
+
+            if (tab != DevelopmentTab.OWNED) {
+                item {
+                    FilterChip(
+                        selected = availableOnly,
+                        onClick = { availableOnly = !availableOnly },
+                        label = { Text("Доступно сейчас") },
                     )
-                    Text(
-                        if (tab == DevelopmentTab.OWNED) {
-                            "Полученные навыки и открытые спец. ветки появятся здесь вместе с описаниями."
-                        } else {
-                            "Сбросьте поиск или фильтр доступности."
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (query.isNotBlank() || availableOnly) {
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = {
-                                query = ""
-                                availableOnly = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Сбросить фильтры") }
-                    }
                 }
             }
-        } else when (tab) {
-            DevelopmentTab.REGULAR -> {
+
+            item {
+                Text(
+                    when (tab) {
+                        DevelopmentTab.REGULAR -> "Обычных навыков: ${filteredEntries.size}"
+                        DevelopmentTab.SPECIAL -> "Записей спец. веток: ${filteredEntries.size}"
+                        DevelopmentTab.MARTIAL_ARTS -> "Стилей и приёмов: ${filteredEntries.size}"
+                        DevelopmentTab.CHI -> ""
+                        DevelopmentTab.OWNED -> "Взято: ${filteredEntries.size}"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (filteredEntries.isEmpty()) {
+                item {
+                    DublCard(Modifier.fillMaxWidth()) {
+                        Text(
+                            if (tab == DevelopmentTab.OWNED) "Пока ничего не взято" else "Ничего не найдено",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            if (tab == DevelopmentTab.OWNED) {
+                                "Полученные навыки, боевые искусства и открытые спец. ветки появятся здесь вместе с описаниями."
+                            } else {
+                                "Сбросьте поиск или фильтр доступности."
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (query.isNotBlank() || availableOnly) {
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    query = ""
+                                    availableOnly = false
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Сбросить фильтры") }
+                        }
+                    }
+                }
+            } else when (tab) {
+                DevelopmentTab.REGULAR -> {
                 val grouped = filteredEntries.groupBy { it.category.ifBlank { "Общие" } }
                 grouped.forEach { (category, entries) ->
                     item(key = "regular-header-$category") {
@@ -311,7 +335,7 @@ fun FeatsScreen(controller: CharacterController) {
                 }
             }
 
-            DevelopmentTab.SPECIAL -> {
+                DevelopmentTab.SPECIAL -> {
                 val grouped = filteredEntries.groupBy(::branchName)
                 grouped.forEach { (branch, branchEntries) ->
                     val access = branchEntries.firstOrNull { it.isAbility }
@@ -336,15 +360,49 @@ fun FeatsScreen(controller: CharacterController) {
                 }
             }
 
-            DevelopmentTab.OWNED -> {
-                val regularOwned = filteredEntries.filter { it.isRegularDevelopment }
-                val specialOwned = filteredEntries.filter { it.isSpecialDevelopment }
+                DevelopmentTab.MARTIAL_ARTS -> {
+                    val grouped = filteredEntries.groupBy { it.category.ifBlank { "Боевые искусства" } }
+                    grouped.forEach { (category, entries) ->
+                        item(key = "martial-header-$category") {
+                            DevelopmentGroupHeader(category, entries.size)
+                        }
+                        items(entries, key = { it.id }) { entry ->
+                            DevelopmentRow(
+                                entry = entry,
+                                rules = rules,
+                                progress = progress,
+                                onClick = { selectedEntryId = entry.id },
+                            )
+                        }
+                    }
+                }
+
+                DevelopmentTab.CHI -> Unit
+
+                DevelopmentTab.OWNED -> {
+                    val regularOwned = filteredEntries.filter { it.isRegularDevelopment }
+                    val martialOwned = filteredEntries.filter { it.isMartialArt }
+                    val specialOwned = filteredEntries.filter { it.isSpecialDevelopment }
 
                 if (regularOwned.isNotEmpty()) {
                     item(key = "owned-regular-header") {
                         DevelopmentGroupHeader("Обычные навыки", regularOwned.size)
                     }
                     items(regularOwned, key = { "owned-${it.id}" }) { entry ->
+                        OwnedDevelopmentRow(
+                            entry = entry,
+                            progress = progress,
+                            rules = rules,
+                            onClick = { selectedEntryId = entry.id },
+                        )
+                    }
+                }
+
+                if (martialOwned.isNotEmpty()) {
+                    item(key = "owned-martial-header") {
+                        DevelopmentGroupHeader("Боевые искусства", martialOwned.size)
+                    }
+                    items(martialOwned, key = { "owned-${it.id}" }) { entry ->
                         OwnedDevelopmentRow(
                             entry = entry,
                             progress = progress,
@@ -368,6 +426,7 @@ fun FeatsScreen(controller: CharacterController) {
                     }
                 }
             }
+        }
         }
     }
 
@@ -543,12 +602,114 @@ private fun DevelopmentBudgetCard(economy: CharacterEconomyBreakdown) {
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             Text(
-                "Характеристики ${economy.attributeXp} · Умения ${economy.skillXp} · Навыки ${economy.developmentXp} · Магия ${economy.manaXp + economy.magicSchoolXp + economy.spellXp}" +
+                "Характеристики ${economy.attributeXp} · Умения ${economy.skillXp} · Навыки ${economy.developmentXp} · ЦИ ${economy.chiXp} · Магия ${economy.manaXp + economy.magicSchoolXp + economy.spellXp}" +
                     if (economy.adjustmentXp != 0) " · Поправка ${economy.adjustmentXp}" else "",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun ChiDevelopmentCard(
+    enabled: Boolean,
+    current: Int,
+    maximum: Int,
+    baseMaximum: Int,
+    bonusRanks: Int,
+    onToggle: (Boolean) -> Unit,
+    onChangeCurrent: (Int) -> Unit,
+    onChangeBonusRanks: (Int) -> Unit,
+    onRestore: () -> Unit,
+) {
+    DublCard(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("ЦИ", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "Внутренняя энергия для боевых приёмов",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            DublSwitch(checked = enabled, onCheckedChange = onToggle)
+        }
+
+        if (!enabled) {
+            Text(
+                "Включите ЦИ, если персонаж освоил доступ к этому ресурсу. Сам переключатель не расходует XP и не выдаёт способности автоматически.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@DublCard
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = DublAccent.copy(alpha = 0.055f),
+            border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.24f)),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text("Текущий запас", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("$current / $maximum", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = { onChangeCurrent(-1) }, enabled = current > 0) { Text("−1") }
+                        OutlinedButton(onClick = { onChangeCurrent(1) }, enabled = current < maximum) { Text("+1") }
+                    }
+                }
+                OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth(), enabled = current < maximum) {
+                    Text("Восстановить полностью")
+                }
+            }
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Дополнительный запас ЦИ", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "$bonusRanks / 10 рангов · 50 XP за ранг",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { onChangeBonusRanks(-1) }, enabled = bonusRanks > 0) { Text("−") }
+                OutlinedButton(onClick = { onChangeBonusRanks(1) }, enabled = bonusRanks < 10) { Text("+") }
+            }
+        }
+
+        Text(
+            "Максимум: база $baseMaximum (Воля + 1, минимум 3) + $bonusRanks = $maximum.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "По правилам запас полностью восстанавливается после 15 минут медитации/лёгкой активности или после 8 часов отдыха.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -42,6 +42,9 @@ data class DublCharacter(
     val manaEnabled: Boolean = false,
     val manaCurrent: Int = 0,
     val manaMaximum: Int = 0,
+    val chiEnabled: Boolean = false,
+    val chiCurrent: Int = 0,
+    val chiBonusRanks: Int = 0,
     val healthMaximumOverride: Int? = null,
     val enduranceMaximumOverride: Int? = null,
     val manaMaximumOverride: Int? = null,
@@ -85,6 +88,8 @@ data class DublCharacter(
     val abilityPoints: Int get() = abilityPointsOverride ?: recommendedAbilityPoints
     val effectiveManaMaximum: Int
         get() = manaMaximumOverride ?: if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
+    val chiMaximum: Int
+        get() = if (chiEnabled) maxOf(3, will + 1) + chiBonusRanks.coerceIn(0, 10) else 0
 
     val runBase: Double
         get() = if (legs >= 3) {
@@ -207,6 +212,7 @@ data class DublCharacter(
             enduranceMaximumOverride = enduranceMaximumOverride?.coerceAtLeast(0),
             manaMaximumOverride = manaMaximumOverride?.coerceAtLeast(0),
             manaMaximum = manaMaximum.coerceAtLeast(0),
+            chiBonusRanks = chiBonusRanks.coerceIn(0, 10),
             customResources = normalizedCustomResources,
             skills = normalizedSkills,
             hiddenSkillIds = hiddenSkillIds.filterTo(linkedSetOf()) { id ->
@@ -223,12 +229,14 @@ data class DublCharacter(
             gear = normalizedGear,
         )
         val maxMana = clamped.effectiveManaMaximum
+        val maxChi = clamped.chiMaximum
         return clamped.copy(
             hpCurrent = clamped.hpCurrent.coerceIn(0, clamped.healthMaximum),
             enduranceCurrent = clamped.enduranceCurrent.coerceIn(0, clamped.enduranceMaximum),
             manaCurrent = clamped.manaCurrent.coerceIn(0, maxMana),
             manaEnabled = clamped.manaEnabled || clamped.magic.manaRank > 0 || clamped.manaMaximumOverride != null,
             manaMaximum = clamped.manaMaximum.coerceAtLeast(0),
+            chiCurrent = clamped.chiCurrent.coerceIn(0, maxChi),
         )
     }
 }
