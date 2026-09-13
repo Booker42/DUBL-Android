@@ -125,6 +125,13 @@ private enum class RollFollowUp(val buttonTitle: String) {
     SUPERIORITY_DIE("Бросить кость превосходства"),
 }
 
+private enum class RollSpecialResult(val title: String) {
+    CRITICAL_FAILURE("Критический провал"),
+    CONFIRMED_CRITICAL_FAILURE("Подтверждённый критический провал"),
+    CRITICAL_SUCCESS("Критический успех"),
+    CONFIRMED_CRITICAL_SUCCESS("Подтверждённый критический успех"),
+}
+
 private sealed interface UndoAction {
     data class Resource(val resource: CharacterResource, val appliedDelta: Int) : UndoAction
     data class Attribute(val id: AttributeId, val appliedDelta: Int) : UndoAction
@@ -154,6 +161,8 @@ private data class RollResult(
     val note: String? = null,
     val followUp: RollFollowUp? = null,
     val followUpDie: Int? = null,
+    val resolvedFollowUp: RollFollowUp? = null,
+    val specialResult: RollSpecialResult? = null,
     val grantedAdvantageDie: Boolean = false,
 )
 
@@ -1958,6 +1967,7 @@ private fun CheckRollSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -2119,9 +2129,11 @@ private fun CheckRollSheet(
                             color = DublGold,
                         )
                         Text(
-                            text = "Итог проверки",
+                            text = rollResultCaption(roll),
                             style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = roll.specialResult?.let { DublAccent } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (roll.specialResult != null) FontWeight.Bold else FontWeight.Normal,
+                            textAlign = TextAlign.Center,
                         )
                         Spacer(Modifier.height(5.dp))
                         Text(
@@ -2170,14 +2182,37 @@ private fun CheckRollSheet(
                             }
                         }
                         roll.followUpDie?.let { die ->
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = followUpDieLabel(roll, die),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = DublGold,
-                                textAlign = TextAlign.Center,
-                            )
+                            Spacer(Modifier.height(10.dp))
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(11.dp),
+                                color = DublGold.copy(alpha = 0.07f),
+                                border = BorderStroke(1.dp, DublGold.copy(alpha = 0.38f)),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    DiceChip(value = die, selected = true)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = followUpDieLabel(roll, die),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = DublGold,
+                                        )
+                                        roll.specialResult?.let { special ->
+                                            Text(
+                                                text = special.title,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = DublAccent,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -2287,12 +2322,17 @@ private fun rollCheck(
     }
     val (followUp, note) = when {
         pair == listOf(1, 1) -> RollFollowUp.CRITICAL_FAILURE_CONFIRMATION to
-            "Критический провал. Бросьте дополнительную кость: ещё одна 1 подтверждает критический провал.$ambiguitySuffix"
+            "Критический провал. Дополнительная кость определяет, будет ли он подтверждён.$ambiguitySuffix"
         pair == listOf(6, 6) -> RollFollowUp.SUPERIORITY_DIE to
-            "Критический успех. Доступна кость превосходства; её результат прибавляется к проверке.$ambiguitySuffix"
+            "Критический успех. Кость превосходства бросается дополнительно и прибавляется к результату.$ambiguitySuffix"
         pair.size == 2 && pair[0] == pair[1] -> RollFollowUp.ADVANTAGE_DIE to
             "Дубль ${pair[0]}–${pair[1]}. По правилам доступна дополнительная кость преимущества.$ambiguitySuffix"
         else -> null to null
+    }
+    val specialResult = when (pair) {
+        listOf(1, 1) -> RollSpecialResult.CRITICAL_FAILURE
+        listOf(6, 6) -> RollSpecialResult.CRITICAL_SUCCESS
+        else -> null
     }
     return RollResult(
         mode = mode,
@@ -2305,6 +2345,7 @@ private fun rollCheck(
         total = chosenValues.sum() + checkBonus + situationalBonus,
         note = note,
         followUp = followUp,
+        specialResult = specialResult,
     )
 }
 
@@ -2327,27 +2368,40 @@ private fun rollFollowUp(roll: RollResult): RollResult {
                 note = "Кость преимущества за дубль: $die. Результат пересчитан по правилам текущего броска.",
                 followUp = null,
                 followUpDie = die,
+                resolvedFollowUp = action,
                 grantedAdvantageDie = true,
             )
         }
         RollFollowUp.CRITICAL_FAILURE_CONFIRMATION -> roll.copy(
             note = if (die == 1) {
-                "Выпала ещё одна 1 — подтверждённый критический провал."
+                "Выпала ещё одна 1 — критический провал подтверждён."
             } else {
-                "Критический провал не подтверждён: дополнительная кость показала $die."
+                "Дополнительная кость показала $die. Критический провал остаётся, но не подтверждается."
             },
             followUp = null,
             followUpDie = die,
+            resolvedFollowUp = action,
+            specialResult = if (die == 1) {
+                RollSpecialResult.CONFIRMED_CRITICAL_FAILURE
+            } else {
+                RollSpecialResult.CRITICAL_FAILURE
+            },
         )
         RollFollowUp.SUPERIORITY_DIE -> roll.copy(
             total = roll.total + die,
             note = if (die == 6) {
-                "Кость превосходства: 6 — подтверждённый критический успех."
+                "Кость превосходства показала 6 — критический успех подтверждён."
             } else {
-                "Кость превосходства: $die добавлена к результату критического успеха."
+                "Кость превосходства показала $die и добавлена к итоговому результату."
             },
             followUp = null,
             followUpDie = die,
+            resolvedFollowUp = action,
+            specialResult = if (die == 6) {
+                RollSpecialResult.CONFIRMED_CRITICAL_SUCCESS
+            } else {
+                RollSpecialResult.CRITICAL_SUCCESS
+            },
         )
     }
 }
@@ -2399,11 +2453,13 @@ private fun followUpPrompt(followUp: RollFollowUp): String = when (followUp) {
     RollFollowUp.SUPERIORITY_DIE -> "Критический успех — доступна кость превосходства."
 }
 
-private fun followUpDieLabel(roll: RollResult, die: Int): String = when {
-    roll.grantedAdvantageDie -> "Дополнительная кость за дубль: $die"
-    roll.note?.contains("превосходства", ignoreCase = true) == true -> "Кость превосходства: $die"
-    roll.note?.contains("критический провал", ignoreCase = true) == true -> "Кость подтверждения: $die"
-    else -> "Дополнительная кость: $die"
+private fun rollResultCaption(roll: RollResult): String = roll.specialResult?.title ?: "Итог проверки"
+
+private fun followUpDieLabel(roll: RollResult, die: Int): String = when (roll.resolvedFollowUp) {
+    RollFollowUp.ADVANTAGE_DIE -> "Кость преимущества: $die"
+    RollFollowUp.CRITICAL_FAILURE_CONFIRMATION -> "Кость подтверждения: $die"
+    RollFollowUp.SUPERIORITY_DIE -> "Кость превосходства: $die"
+    null -> "Дополнительная кость: $die"
 }
 
 private fun buildRollBreakdown(roll: RollResult): String = buildString {
@@ -2413,7 +2469,7 @@ private fun buildRollBreakdown(roll: RollResult): String = buildString {
     if (roll.situationalBonus != 0) {
         append(" · ситуация ").append(signed(roll.situationalBonus))
     }
-    if (roll.followUpDie != null && roll.note?.contains("превосходства", ignoreCase = true) == true) {
+    if (roll.followUpDie != null && roll.resolvedFollowUp == RollFollowUp.SUPERIORITY_DIE) {
         append(" · превосходство +").append(roll.followUpDie)
     }
 }
