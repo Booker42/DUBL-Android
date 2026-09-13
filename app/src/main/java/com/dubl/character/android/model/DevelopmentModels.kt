@@ -31,6 +31,18 @@ data class DevelopmentEntry(
     val conflictNote: String,
 ) {
     val isAbility: Boolean get() = costType == DevelopmentCostType.ABILITY
+
+    /**
+     * Special development is intentionally broader than accessId != null.
+     * Some rulebook branches (perfect abilities / animagia / entropy) are XP-only
+     * and therefore have no separate ability-point access record, but still belong
+     * to the special-branch catalogue rather than the ordinary feat list.
+     */
+    val isSpecialDevelopment: Boolean
+        get() = isAbility || accessId != null || developmentNormalize(section) == "ветки способностей"
+
+    val isRegularDevelopment: Boolean
+        get() = !isSpecialDevelopment && costType == DevelopmentCostType.XP
 }
 
 data class OwnedDevelopment(

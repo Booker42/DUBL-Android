@@ -143,4 +143,30 @@ class DevelopmentRulesTest {
         assertEquals(-1, spentRules.abilityPointsAvailable())
     }
 
+    @Test
+    fun developmentEntriesSeparateRegularAndSpecialBranches() {
+        val regular = child.copy(
+            id = "regular",
+            name = "Крепкий хват",
+            section = "Навыки",
+            category = "Общие",
+            accessId = null,
+        )
+        val perfect = child.copy(
+            id = "perfect",
+            name = "Ассасин",
+            section = "Ветки способностей",
+            category = "Ассасин",
+            accessId = null,
+            perfectRoot = true,
+        )
+
+        assertTrue(regular.isRegularDevelopment)
+        assertFalse(regular.isSpecialDevelopment)
+        assertTrue(access.isSpecialDevelopment)
+        assertTrue(child.isSpecialDevelopment)
+        assertTrue(perfect.isSpecialDevelopment)
+        assertFalse(perfect.isRegularDevelopment)
+    }
+
 }

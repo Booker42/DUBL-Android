@@ -707,8 +707,8 @@ private fun CharacterHero(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     MetaPill(
-                        label = "XP осталось",
-                        value = "${economy.remainingXp} / ${economy.totalExperience}",
+                        label = "XP потрачено",
+                        value = "${economy.spentXp} / ${economy.totalExperience}",
                         modifier = Modifier.weight(1f),
                         onClick = onExperienceClick,
                     )
