@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.DevelopmentCatalogRepository
 import com.dubl.character.android.model.DevelopmentCatalog
 import com.dubl.character.android.model.DevelopmentCostType
@@ -53,6 +54,7 @@ import com.dubl.character.android.model.RequirementStatus
 import com.dubl.character.android.model.developmentNormalize
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
+import com.dubl.character.android.ui.components.DublScreenHeader
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublDanger
 import com.dubl.character.android.ui.theme.DublGold
@@ -142,16 +144,12 @@ fun FeatsScreen(controller: CharacterController) {
         verticalArrangement = Arrangement.spacedBy(7.dp),
         contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        item { Spacer(Modifier.height(5.dp)) }
+        item { Spacer(Modifier.height(8.dp)) }
         item {
-            Column {
-                Text("Навыки", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "Развитие персонажа · полный каталог desktop",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            DublScreenHeader(
+                title = "Навыки",
+                subtitle = "Навыки, способности и требования",
+            )
         }
 
         item {
@@ -163,7 +161,7 @@ fun FeatsScreen(controller: CharacterController) {
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Поиск по названию, требованиям и эффекту") },
+                label = { Text("Поиск навыка или способности") },
                 singleLine = true,
             )
         }
@@ -184,7 +182,7 @@ fun FeatsScreen(controller: CharacterController) {
                             availableOnly = !availableOnly
                             if (availableOnly) ownedOnly = false
                         },
-                        label = { Text("Доступно сейчас") },
+                        label = { Text("Доступно") },
                     )
                 }
                 item {
@@ -222,12 +220,25 @@ fun FeatsScreen(controller: CharacterController) {
             val grouped = filteredEntries.groupBy { it.category }
             grouped.forEach { (category, entries) ->
                 item(key = "dev-header-$category") {
-                    Text(
-                        category.ifBlank { "Общие" },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 7.dp, bottom = 1.dp),
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 11.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            category.ifBlank { "Общие" },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            entries.size.toString(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                        )
+                    }
                 }
                 items(entries, key = { it.id }) { entry ->
                     DevelopmentRow(
@@ -291,17 +302,23 @@ private fun DevelopmentBudgetCard(rules: DevelopmentRules) {
     val available = rules.abilityPointsAvailable()
     val budget = rules.abilityPointsBudget()
     val spent = rules.abilityPointsSpent()
-    DublCard(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 11.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = DublGold.copy(alpha = 0.035f),
+        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.24f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("Очки способностей", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Очки способностей",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     "$available доступно",
                     style = MaterialTheme.typography.titleLarge,
@@ -311,12 +328,13 @@ private fun DevelopmentBudgetCard(rules: DevelopmentRules) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "$spent / $budget использовано",
+                    "$spent / $budget ОС",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "Навыки: ${rules.xpSpentOnDevelopment()} опыта",
+                    "${rules.xpSpentOnDevelopment()} XP в навыках",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -343,26 +361,34 @@ private fun DevelopmentRow(
         else -> MaterialTheme.colorScheme.outline
     }
     val status = when {
-        invalidOwned -> "⚠ Требования"
+        invalidOwned -> "Проверить"
         owned -> "✓ $rank/${entry.maxRank}"
-        availability.canIncrease -> "Можно взять"
+        availability.canIncrease -> "Доступно"
         availability.checks.any { it.status == RequirementStatus.MANUAL } -> "Проверить"
-        entry.isAbility && availability.reason.contains("очков") -> "Не хватает ОС"
-        else -> "Недоступно"
+        entry.isAbility && availability.reason.contains("очков") -> "Нет ОС"
+        else -> "Закрыто"
     }
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(11.dp),
-        color = if (owned) accent.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, accent.copy(alpha = if (owned || availability.canIncrease) 0.5f else 0.25f)),
+        shape = RoundedCornerShape(14.dp),
+        color = if (owned || availability.canIncrease) accent.copy(alpha = 0.035f) else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, accent.copy(alpha = if (owned || availability.canIncrease) 0.42f else 0.20f)),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Surface(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(38.dp),
+                shape = RoundedCornerShape(999.dp),
+                color = accent.copy(alpha = if (owned || availability.canIncrease) 0.9f else 0.34f),
+            ) {}
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     entry.name,
@@ -406,16 +432,31 @@ private fun DevelopmentRow(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    status,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = accent,
-                )
-                Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            DevelopmentStatusPill(status = status, accent = accent)
         }
+    }
+}
+
+
+@Composable
+private fun DevelopmentStatusPill(
+    status: String,
+    accent: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = accent.copy(alpha = 0.09f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.26f)),
+    ) {
+        Text(
+            text = status,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = accent,
+            maxLines = 1,
+        )
     }
 }
 

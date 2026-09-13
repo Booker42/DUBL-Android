@@ -58,6 +58,7 @@ import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.model.skillXpSpent
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
+import com.dubl.character.android.ui.components.DublScreenHeader
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublGold
 
@@ -114,31 +115,28 @@ fun SkillsScreen(controller: CharacterController) {
         verticalArrangement = Arrangement.spacedBy(7.dp),
         contentPadding = PaddingValues(bottom = 20.dp),
     ) {
-        item { Spacer(Modifier.height(5.dp)) }
+        item { Spacer(Modifier.height(8.dp)) }
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Умения", style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        character.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Button(onClick = { showAdd = true }) { Text("+ Умение") }
-            }
+            DublScreenHeader(
+                title = "Умения",
+                subtitle = character.name,
+                action = {
+                    Button(
+                        onClick = { showAdd = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text("+ Добавить")
+                    }
+                },
+            )
         }
 
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+                shape = RoundedCornerShape(14.dp),
+                color = DublGold.copy(alpha = 0.035f),
+                border = BorderStroke(1.dp, DublGold.copy(alpha = 0.24f)),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -152,7 +150,7 @@ fun SkillsScreen(controller: CharacterController) {
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        "XP в умения ${character.skillXpSpent()}",
+                        "${character.skillXpSpent()} XP вложено",
                         style = MaterialTheme.typography.labelLarge,
                         color = DublGold,
                     )
@@ -165,7 +163,7 @@ fun SkillsScreen(controller: CharacterController) {
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Поиск по умениям") },
+                label = { Text("Поиск умения") },
                 singleLine = true,
             )
         }
@@ -204,7 +202,7 @@ fun SkillsScreen(controller: CharacterController) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { showHidden = true },
-                    shape = RoundedCornerShape(9.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.38f)),
                 ) {
@@ -246,12 +244,25 @@ fun SkillsScreen(controller: CharacterController) {
                 val categorySkills = filtered.filter { it.category == category }
                 if (categorySkills.isNotEmpty()) {
                     item(key = "header-${category.name}") {
-                        Text(
-                            category.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(top = 7.dp, bottom = 1.dp),
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 11.dp, bottom = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                category.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                categorySkills.size.toString(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                            )
+                        }
                     }
                     items(categorySkills, key = { it.id }) { skill ->
                         SkillRow(
@@ -361,7 +372,7 @@ private fun SkillRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(11.dp),
+        shape = RoundedCornerShape(14.dp),
         color = container,
         border = BorderStroke(if (trained) 1.2.dp else 1.dp, border),
     ) {
@@ -458,7 +469,7 @@ private fun MiniSkillAction(
 ) {
     Surface(
         modifier = Modifier
-            .size(34.dp)
+            .size(32.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(9.dp),
         color = accent.copy(alpha = if (selected) 0.14f else 0.045f),
