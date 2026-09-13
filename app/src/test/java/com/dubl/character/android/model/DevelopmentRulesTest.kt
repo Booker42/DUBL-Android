@@ -169,4 +169,78 @@ class DevelopmentRulesTest {
         assertFalse(perfect.isRegularDevelopment)
     }
 
+    @Test
+    fun orRequirementAcceptsBareCombatSkillShorthand() {
+        val either = child.copy(
+            id = "either-combat-skill",
+            name = "Тест ИЛИ",
+            accessId = null,
+            requirements = "Рукопашный ИЛИ Холодное",
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(either))
+
+        val unarmedCharacter = character().copy(
+            skills = mapOf(
+                "unarmed" to CharacterSkill(id = "unarmed", definitionId = "unarmed", rank = 1),
+            ),
+        )
+        val unarmedRules = DevelopmentRules(unarmedCharacter, localCatalog, DevelopmentProgress())
+        assertTrue(unarmedRules.availability(either).canIncrease)
+        assertTrue(unarmedRules.requirements(either).all { it.status == RequirementStatus.OK })
+
+        val meleeCharacter = character().copy(
+            skills = mapOf(
+                "melee_weapon" to CharacterSkill(id = "melee_weapon", definitionId = "melee_weapon", rank = 1),
+            ),
+        )
+        val meleeRules = DevelopmentRules(meleeCharacter, localCatalog, DevelopmentProgress())
+        assertTrue(meleeRules.availability(either).canIncrease)
+        assertTrue(meleeRules.requirements(either).all { it.status == RequirementStatus.OK })
+
+        val missingRules = DevelopmentRules(character(), localCatalog, DevelopmentProgress())
+        assertFalse(missingRules.availability(either).canIncrease)
+        assertTrue(missingRules.requirements(either).all { it.status != RequirementStatus.MANUAL })
+    }
+
+    @Test
+    fun orRequirementPropagatesTrailingRankToEveryAlternative() {
+        val either = child.copy(
+            id = "either-ranked-combat-skill",
+            name = "Тест ИЛИ ранга",
+            accessId = null,
+            requirements = "Холодное оружие или Рукопашный бой 4",
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(either))
+        val unarmedCharacter = character().copy(
+            skills = mapOf(
+                "unarmed" to CharacterSkill(id = "unarmed", definitionId = "unarmed", rank = 4),
+            ),
+        )
+        val rules = DevelopmentRules(unarmedCharacter, localCatalog, DevelopmentProgress())
+        assertTrue(rules.availability(either).canIncrease)
+        assertTrue(rules.requirements(either).all { it.status == RequirementStatus.OK })
+    }
+
+    @Test
+    fun unmetRequirementsCanBeForcePurchasedButRemainInvalid() {
+        val locked = child.copy(
+            id = "forceable",
+            name = "Принудительная покупка",
+            accessId = null,
+            requirements = "Ловкость 8",
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(locked))
+        val baseCharacter = character(dexterity = 2)
+        val before = DevelopmentRules(baseCharacter, localCatalog, DevelopmentProgress())
+
+        assertFalse(before.availability(locked).canIncrease)
+        assertTrue(before.availability(locked).canForceIncrease)
+
+        val forcedProgress = DevelopmentProgress().withRank(locked, 1)
+        val after = DevelopmentRules(baseCharacter, localCatalog, forcedProgress)
+        assertEquals(1, forcedProgress.rank(locked.id))
+        assertTrue(after.requirements(locked).any { it.status == RequirementStatus.FAIL })
+        assertFalse(after.availability(locked).canForceIncrease)
+    }
+
 }

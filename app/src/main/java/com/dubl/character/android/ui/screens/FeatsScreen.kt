@@ -73,6 +73,12 @@ private data class PendingAbilityPurchase(
     val optionIndex: Int,
 )
 
+private data class PendingRequirementOverride(
+    val entry: DevelopmentEntry,
+    val optionIndex: Int,
+    val failedChecks: List<RequirementCheck>,
+)
+
 @Composable
 fun FeatsScreen(controller: CharacterController) {
     val character = controller.active
@@ -86,6 +92,7 @@ fun FeatsScreen(controller: CharacterController) {
     var availableOnly by remember(character.id) { mutableStateOf(false) }
     var selectedEntryId by remember(character.id) { mutableStateOf<String?>(null) }
     var pendingAbilityPurchase by remember(character.id) { mutableStateOf<PendingAbilityPurchase?>(null) }
+    var pendingRequirementOverride by remember(character.id) { mutableStateOf<PendingRequirementOverride?>(null) }
 
     val rules = remember(character, progress, catalog) {
         DevelopmentRules(character, catalog, progress)
@@ -94,11 +101,21 @@ fun FeatsScreen(controller: CharacterController) {
 
     fun increase(entry: DevelopmentEntry, optionIndex: Int) {
         val availability = rules.availability(entry, optionIndex)
-        if (!availability.canIncrease) return
-        if (entry.isAbility) {
-            pendingAbilityPurchase = PendingAbilityPurchase(entry, optionIndex)
-        } else {
-            controller.setDevelopmentRank(entry.id, availability.currentRank + 1, optionIndex)
+        when {
+            availability.canIncrease -> {
+                if (entry.isAbility) {
+                    pendingAbilityPurchase = PendingAbilityPurchase(entry, optionIndex)
+                } else {
+                    controller.setDevelopmentRank(entry.id, availability.currentRank + 1, optionIndex)
+                }
+            }
+            availability.canForceIncrease -> {
+                pendingRequirementOverride = PendingRequirementOverride(
+                    entry = entry,
+                    optionIndex = optionIndex,
+                    failedChecks = availability.checks.filter { it.status != RequirementStatus.OK },
+                )
+            }
         }
     }
 
@@ -330,6 +347,7 @@ fun FeatsScreen(controller: CharacterController) {
                         OwnedDevelopmentRow(
                             entry = entry,
                             progress = progress,
+                            rules = rules,
                             onClick = { selectedEntryId = entry.id },
                         )
                     }
@@ -343,6 +361,7 @@ fun FeatsScreen(controller: CharacterController) {
                         OwnedDevelopmentRow(
                             entry = entry,
                             progress = progress,
+                            rules = rules,
                             onClick = { selectedEntryId = entry.id },
                         )
                     }
@@ -364,6 +383,67 @@ fun FeatsScreen(controller: CharacterController) {
                 onDismiss = { selectedEntryId = null },
             )
         } ?: run { selectedEntryId = null }
+    }
+
+    pendingRequirementOverride?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingRequirementOverride = null },
+            title = { Text("Требования не выполнены") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(
+                        if (pending.entry.isAbility) {
+                            "Открыть «${pending.entry.name}» несмотря на невыполненные требования?"
+                        } else {
+                            "Добавить «${pending.entry.name}» несмотря на невыполненные требования?"
+                        },
+                    )
+                    pending.failedChecks.forEach { check ->
+                        Text(
+                            "• ${check.text}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when (check.status) {
+                                RequirementStatus.FAIL -> DublDanger
+                                RequirementStatus.MANUAL -> DublGold
+                                RequirementStatus.OK -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    Text(
+                        "После добавления запись останется помеченной «⚠ Требования», пока условия реально не будут выполнены.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        if (pending.entry.isAbility) {
+                            "Будет потрачено ${rules.abilityCost(pending.entry, pending.optionIndex)} ОС."
+                        } else {
+                            "Будет учтено ${pending.entry.cost} XP за следующий ранг."
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = DublGold,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val current = progress.rank(pending.entry.id)
+                        controller.setDevelopmentRank(
+                            pending.entry.id,
+                            current + 1,
+                            pending.optionIndex,
+                        )
+                        pendingRequirementOverride = null
+                    },
+                ) {
+                    Text(if (pending.entry.isAbility) "Открыть всё равно" else "Добавить всё равно")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRequirementOverride = null }) { Text("Отмена") }
+            },
+        )
     }
 
     pendingAbilityPurchase?.let { pending ->
@@ -567,10 +647,16 @@ private fun SpecialBranchHeader(
 private fun OwnedDevelopmentRow(
     entry: DevelopmentEntry,
     progress: DevelopmentProgress,
+    rules: DevelopmentRules,
     onClick: () -> Unit,
 ) {
     val rank = progress.rank(entry.id)
-    val accent = if (entry.isSpecialDevelopment) DublGold else DublAccent
+    val invalidOwned = rules.availability(entry).checks.any { it.status != RequirementStatus.OK }
+    val accent = when {
+        invalidOwned -> DublDanger
+        entry.isSpecialDevelopment -> DublGold
+        else -> DublAccent
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -610,8 +696,20 @@ private fun OwnedDevelopmentRow(
                 }
                 Spacer(Modifier.width(10.dp))
                 DevelopmentStatusPill(
-                    status = if (entry.maxRank > 1) "Ранг $rank/${entry.maxRank}" else "Взято",
+                    status = when {
+                        invalidOwned -> "⚠ Требования"
+                        entry.maxRank > 1 -> "Ранг $rank/${entry.maxRank}"
+                        else -> "Взято"
+                    },
                     accent = accent,
+                )
+            }
+            if (invalidOwned) {
+                Text(
+                    "Текущие требования не выполнены",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = DublDanger,
                 )
             }
             val description = entry.benefit.ifBlank { entry.notes }
@@ -646,7 +744,7 @@ private fun DevelopmentRow(
         else -> MaterialTheme.colorScheme.outline
     }
     val status = when {
-        invalidOwned -> "Проверить"
+        invalidOwned -> "⚠ Требования"
         owned && entry.isAbility -> "✓ Открыта"
         owned -> "✓ $rank/${entry.maxRank}"
         availability.canIncrease && entry.isAbility -> "Открыть"
@@ -845,7 +943,7 @@ private fun DevelopmentDetailSheet(
                     border = BorderStroke(1.dp, DublDanger.copy(alpha = 0.35f)),
                 ) {
                     Text(
-                        "Навык уже получен, но его текущие требования больше не выполнены. Он не удаляется автоматически.",
+                        "Запись уже получена, но текущие требования не выполнены. Она не удаляется автоматически и останется помеченной, пока условия не будут соблюдены.",
                         modifier = Modifier.padding(10.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = DublDanger,
@@ -922,7 +1020,7 @@ private fun DevelopmentDetailSheet(
                 }
                 Button(
                     onClick = { onIncrease(optionIndex) },
-                    enabled = availability.canIncrease,
+                    enabled = availability.canIncrease || availability.canForceIncrease,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -930,6 +1028,8 @@ private fun DevelopmentDetailSheet(
                             availability.canIncrease && entry.isAbility -> "Открыть · ${availability.abilityCost} ОС"
                             availability.canIncrease && currentRank > 0 -> "+ ранг · ${entry.cost} XP"
                             availability.canIncrease -> "Получить · ${entry.cost} XP"
+                            availability.canForceIncrease && entry.isAbility -> "Открыть всё равно"
+                            availability.canForceIncrease -> "Добавить всё равно"
                             else -> availability.reason
                         }
                     )

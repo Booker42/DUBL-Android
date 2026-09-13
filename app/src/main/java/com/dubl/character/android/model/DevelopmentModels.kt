@@ -89,6 +89,7 @@ data class DevelopmentAvailability(
     val maxRank: Int,
     val abilityCost: Int,
     val canIncrease: Boolean,
+    val canForceIncrease: Boolean,
     val reason: String,
 )
 
@@ -122,6 +123,9 @@ private val DEVELOPMENT_ALIASES = mapOf(
     "ул. инициатива" to "улучшенная инициатива",
     "инженерное дело" to "инженерное дело (ремонт)",
     "тело" to "телосложение",
+    "рукопашный" to "рукопашный бой",
+    "рукопашное" to "рукопашный бой",
+    "холодное" to "холодное оружие",
 )
 
 fun developmentNormalize(value: String): String = value
@@ -180,6 +184,7 @@ class DevelopmentRules(
         // The rulebook phrases the OS budget as a recommendation, not a hard limit.
         // Overspending is surfaced by the budget summary but does not invalidate a GM-approved build.
         val canIncrease = !entry.incomplete && !failed && !manual && !maxed
+        val canForceIncrease = !entry.incomplete && !maxed && (failed || manual)
         val reason = when {
             entry.incomplete -> "Запись книги не завершена"
             maxed -> "Максимальный ранг"
@@ -193,6 +198,7 @@ class DevelopmentRules(
             maxRank = entry.maxRank.coerceAtLeast(1),
             abilityCost = abilityCost,
             canIncrease = canIncrease,
+            canForceIncrease = canForceIncrease,
             reason = reason,
         )
     }
@@ -349,6 +355,8 @@ class DevelopmentRules(
             featureName = developmentAlias(originalName)
             need = numeric.groupValues[2].toIntOrNull() ?: 1
             numericRequirement(originalName, featureName, need)?.let { return it }
+        } else {
+            skillRequirement(text, 1)?.let { return it }
         }
 
         val known = catalog.matchingName(featureName)
@@ -442,8 +450,7 @@ class DevelopmentRules(
             return valueCheck(originalName, ranks.getOrElse(1) { 0 }, need)
         }
 
-        val exactSkill = allSkills.firstOrNull { developmentAlias(it.name) == normalizedName }
-        if (exactSkill != null) return valueCheck(originalName, exactSkill.rank, need)
+        skillRequirement(originalName, need)?.let { return it }
 
         val family = when {
             Regex("^знани[ея](\\s*\\(любое\\))?$", RegexOption.IGNORE_CASE).matches(originalName) -> "знание"
@@ -458,6 +465,26 @@ class DevelopmentRules(
             return valueCheck(originalName, actual, need)
         }
 
+        return null
+    }
+
+    private fun skillRequirement(name: String, need: Int): RequirementCheck? {
+        val normalized = developmentAlias(name)
+        val exact = allSkills.filter { developmentAlias(it.name) == normalized }
+        if (exact.isNotEmpty()) {
+            return valueCheck(name, exact.maxOf { it.rank }, need)
+        }
+
+        // The rulebook frequently shortens combat-skill names in requirements
+        // (e.g. "Рукопашный" / "Холодное"). Accept a unique prefix,
+        // but never guess when more than one skill could match.
+        val prefixMatches = allSkills.filter { skill ->
+            val skillName = developmentAlias(skill.name)
+            normalized.length >= 4 && (skillName.startsWith(normalized) || normalized.startsWith(skillName))
+        }
+        if (prefixMatches.map { developmentAlias(it.name) }.distinct().size == 1 && prefixMatches.isNotEmpty()) {
+            return valueCheck(name, prefixMatches.maxOf { it.rank }, need)
+        }
         return null
     }
 
