@@ -1707,7 +1707,7 @@ private fun ConditionDetailSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(scrollState)
+                .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
             Text(condition.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
