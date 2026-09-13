@@ -240,7 +240,8 @@ class DevelopmentRulesTest {
         val after = DevelopmentRules(baseCharacter, localCatalog, forcedProgress)
         assertEquals(1, forcedProgress.rank(locked.id))
         assertTrue(after.requirements(locked).any { it.status == RequirementStatus.FAIL })
-        assertFalse(after.availability(locked).canForceIncrease)
+        assertFalse(after.availability(locked).canIncrease)
+        assertTrue(after.availability(locked).canForceIncrease)
     }
 
 }
