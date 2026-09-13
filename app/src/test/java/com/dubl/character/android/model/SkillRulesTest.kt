@@ -15,7 +15,7 @@ class SkillRulesTest {
     }
 
     @Test
-    fun multiAttributeSkillAddsEverySelectedAttributeOnce() {
+    fun multiAttributeSkillOffersAlternativeAttributeCalculations() {
         val state = CharacterSkill(
             id = "athletics",
             definitionId = "athletics",
@@ -29,7 +29,21 @@ class SkillRulesTest {
         )
         val skill = character.resolveSkill("athletics")!!
 
-        assertEquals(9, character.skillCalculation(skill).total)
+        val defaultCalculation = character.skillCalculation(skill)
+        assertEquals(5, defaultCalculation.total)
+        assertEquals(AttributeId.STRENGTH, defaultCalculation.selectedAttribute)
+
+        val options = character.skillCalculationOptions(skill)
+            .map { (attribute, calculation) -> attribute to calculation.total }
+        assertEquals(
+            listOf(
+                AttributeId.STRENGTH to 5,
+                AttributeId.DEXTERITY to 6,
+            ),
+            options,
+        )
+
+        assertEquals(6, character.skillCalculation(skill, AttributeId.DEXTERITY).total)
     }
 
     @Test
