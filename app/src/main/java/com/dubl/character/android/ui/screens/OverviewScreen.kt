@@ -10,6 +10,7 @@ import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -563,11 +565,11 @@ fun OverviewScreen(controller: CharacterController) {
             CharacterResource.MANA -> ResourceAdjustSheet(
                 title = "Мана",
                 current = character.manaCurrent,
-                maximum = character.effectiveManaMaximum,
+                maximum = character.manaMaximum,
                 accent = DublMana,
                 onChange = { requestedDelta ->
                     val before = character.manaCurrent
-                    val after = (before + requestedDelta).coerceIn(0, character.effectiveManaMaximum)
+                    val after = (before + requestedDelta).coerceIn(0, character.manaMaximum)
                     val applied = after - before
                     if (applied != 0) {
                         controller.changeMana(applied)
@@ -998,7 +1000,7 @@ private fun ResourceStrip(
                 CharacterResource.MANA -> CompactResourceCard(
                     title = "Мана",
                     current = character.manaCurrent,
-                    maximum = character.effectiveManaMaximum,
+                    maximum = character.manaMaximum,
                     accent = DublMana,
                     modifier = Modifier.weight(1f),
                     onClick = { onResourceClick(resource) },
@@ -1323,20 +1325,18 @@ private fun statInfo(id: StatId, character: DublCharacter): StatInfo = when (id)
     StatId.DEFENSE -> StatInfo(
         id = id,
         value = character.defense.toString(),
-        formula = "10 − Размер + Скорость + Ловкость + нагрузка",
+        formula = "10 − Размер + Скорость + Ловкость",
         breakdown = listOf(
             "10 − ${character.size} + ${character.speed} + ${character.dexterity}",
-            "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
             "Итог: ${character.defense}",
         ),
     )
     StatId.REFLEXES -> StatInfo(
         id = id,
         value = signed(character.reflexes),
-        formula = "Скорость + Ловкость + нагрузка",
+        formula = "Скорость + Ловкость",
         breakdown = listOf(
             "${character.speed} + ${character.dexterity}",
-            "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
             "Итог: ${signed(character.reflexes)}",
         ),
     )
@@ -1363,13 +1363,12 @@ private fun statInfo(id: StatId, character: DublCharacter): StatInfo = when (id)
         StatInfo(
             id = id,
             value = "${formatNumber(character.runFull)} м",
-            formula = "Базовый бег + Скорость × множитель + нагрузка",
+            formula = "Базовый бег + Скорость × множитель размера/ног",
             breakdown = listOf(
                 "Базовый бег: ${formatNumber(character.runBase)} м",
                 "Скорость: ${character.speed}",
                 "Множитель: ${formatNumber(multiplier)}",
-                "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
-                "Итог: ${formatNumber(character.runFull)} м",
+                "Итог: ${formatNumber(character.runBase)} + ${character.speed} × ${formatNumber(multiplier)} = ${formatNumber(character.runFull)} м",
             ),
             note = "Множитель зависит от Размера (${character.size}) и количества ног (${character.legs}).",
         )
@@ -1708,6 +1707,7 @@ private fun ConditionDetailSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
         ) {
             Text(condition.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -1933,6 +1933,7 @@ private fun CheckRollSheet(
     var hindranceCount by remember(rememberKey) { mutableStateOf(0) }
     var situationalText by remember(rememberKey) { mutableStateOf("0") }
     var result by remember(rememberKey) { mutableStateOf<RollResult?>(null) }
+    val scrollState = rememberScrollState()
 
     val situationalBonus = situationalText.toIntOrNull()?.coerceIn(-99, 99) ?: 0
     val mode = when {
@@ -2139,6 +2140,35 @@ private fun CheckRollSheet(
                                 DiceChip(value = die, selected = index in roll.chosenIndices)
                             }
                         }
+                        roll.followUp?.let { followUp ->
+                            Spacer(Modifier.height(12.dp))
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(11.dp),
+                                color = DublAccent.copy(alpha = 0.08f),
+                                border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.45f)),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text(
+                                        text = followUpPrompt(followUp),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = DublAccent,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { result = rollFollowUp(roll) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(followUp.buttonTitle)
+                                    }
+                                }
+                            }
+                        }
                         roll.followUpDie?.let { die ->
                             Spacer(Modifier.height(8.dp))
                             Text(
@@ -2165,15 +2195,6 @@ private fun CheckRollSheet(
                                 color = DublAccent,
                                 textAlign = TextAlign.Center,
                             )
-                        }
-                        roll.followUp?.let { followUp ->
-                            Spacer(Modifier.height(12.dp))
-                            Button(
-                                onClick = { result = rollFollowUp(roll) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(followUp.buttonTitle)
-                            }
                         }
                     }
                 }
@@ -2370,6 +2391,12 @@ private fun rollModeDescription(roll: RollResult): String = buildString {
         RollMode.HINDRANCE -> append("Помехи ×${roll.effectCount} · ${2 + roll.effectCount}d6 · выбрать 2 наименьших")
     }
     if (roll.grantedAdvantageDie) append(" · +1 кость за дубль")
+}
+
+private fun followUpPrompt(followUp: RollFollowUp): String = when (followUp) {
+    RollFollowUp.ADVANTAGE_DIE -> "Выпал дубль — доступен дополнительный куб."
+    RollFollowUp.CRITICAL_FAILURE_CONFIRMATION -> "Критический провал — можно бросить кость подтверждения."
+    RollFollowUp.SUPERIORITY_DIE -> "Критический успех — доступна кость превосходства."
 }
 
 private fun followUpDieLabel(roll: RollResult, die: Int): String = when {
