@@ -563,11 +563,11 @@ fun OverviewScreen(controller: CharacterController) {
             CharacterResource.MANA -> ResourceAdjustSheet(
                 title = "Мана",
                 current = character.manaCurrent,
-                maximum = character.manaMaximum,
+                maximum = character.effectiveManaMaximum,
                 accent = DublMana,
                 onChange = { requestedDelta ->
                     val before = character.manaCurrent
-                    val after = (before + requestedDelta).coerceIn(0, character.manaMaximum)
+                    val after = (before + requestedDelta).coerceIn(0, character.effectiveManaMaximum)
                     val applied = after - before
                     if (applied != 0) {
                         controller.changeMana(applied)
@@ -998,7 +998,7 @@ private fun ResourceStrip(
                 CharacterResource.MANA -> CompactResourceCard(
                     title = "Мана",
                     current = character.manaCurrent,
-                    maximum = character.manaMaximum,
+                    maximum = character.effectiveManaMaximum,
                     accent = DublMana,
                     modifier = Modifier.weight(1f),
                     onClick = { onResourceClick(resource) },
@@ -1323,18 +1323,20 @@ private fun statInfo(id: StatId, character: DublCharacter): StatInfo = when (id)
     StatId.DEFENSE -> StatInfo(
         id = id,
         value = character.defense.toString(),
-        formula = "10 − Размер + Скорость + Ловкость",
+        formula = "10 − Размер + Скорость + Ловкость + нагрузка",
         breakdown = listOf(
             "10 − ${character.size} + ${character.speed} + ${character.dexterity}",
+            "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
             "Итог: ${character.defense}",
         ),
     )
     StatId.REFLEXES -> StatInfo(
         id = id,
         value = signed(character.reflexes),
-        formula = "Скорость + Ловкость",
+        formula = "Скорость + Ловкость + нагрузка",
         breakdown = listOf(
             "${character.speed} + ${character.dexterity}",
+            "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
             "Итог: ${signed(character.reflexes)}",
         ),
     )
@@ -1361,12 +1363,13 @@ private fun statInfo(id: StatId, character: DublCharacter): StatInfo = when (id)
         StatInfo(
             id = id,
             value = "${formatNumber(character.runFull)} м",
-            formula = "Базовый бег + Скорость × множитель размера/ног",
+            formula = "Базовый бег + Скорость × множитель + нагрузка",
             breakdown = listOf(
                 "Базовый бег: ${formatNumber(character.runBase)} м",
                 "Скорость: ${character.speed}",
                 "Множитель: ${formatNumber(multiplier)}",
-                "Итог: ${formatNumber(character.runBase)} + ${character.speed} × ${formatNumber(multiplier)} = ${formatNumber(character.runFull)} м",
+                "Поправка нагрузки: ${signed(character.equipmentLoadPenalty)}",
+                "Итог: ${formatNumber(character.runFull)} м",
             ),
             note = "Множитель зависит от Размера (${character.size}) и количества ног (${character.legs}).",
         )

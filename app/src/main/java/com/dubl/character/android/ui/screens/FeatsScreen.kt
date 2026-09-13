@@ -49,6 +49,7 @@ import com.dubl.character.android.model.DevelopmentCostType
 import com.dubl.character.android.model.DevelopmentEntry
 import com.dubl.character.android.model.DevelopmentProgress
 import com.dubl.character.android.model.DevelopmentRules
+import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.model.RequirementCheck
 import com.dubl.character.android.model.RequirementStatus
 import com.dubl.character.android.model.developmentNormalize
@@ -111,6 +112,7 @@ fun FeatsScreen(controller: CharacterController) {
         catalog.entries
             .asSequence()
             .filterNot { it.incomplete }
+            .filterNot { it.id == MagicEquipmentRules.BASE_MANA_ENTRY_ID }
             .filter { entry ->
                 when (typeFilter) {
                     DevelopmentFilter.ALL -> true

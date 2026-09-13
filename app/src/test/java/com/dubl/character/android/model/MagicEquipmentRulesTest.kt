@@ -1,0 +1,78 @@
+package com.dubl.character.android.model
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MagicEquipmentRulesTest {
+    @Test
+    fun manaUsesDesktopTableAndDevelopmentBonuses() {
+        val character = DublCharacter(
+            id = "magic",
+            magic = CharacterMagic(manaRank = 2, power = 10),
+            development = mapOf(
+                MagicEquipmentRules.INCREASED_MANA_ENTRY_ID to OwnedDevelopment(rank = 3),
+                MagicEquipmentRules.MEDITATION_ENTRY_ID to OwnedDevelopment(rank = 2),
+            ),
+        )
+        assertEquals(31, MagicEquipmentRules.manaMaximum(character))
+        assertEquals(3, MagicEquipmentRules.manaRecoveryPerRound(character))
+    }
+
+    @Test
+    fun equipmentLoadAndBurdenMatchDesktopRules() {
+        val attrs = defaultAttributes() + mapOf(
+            AttributeId.STRENGTH to AttributeValue(base = 4),
+            AttributeId.CONSTITUTION to AttributeValue(base = 3),
+        )
+        val character = DublCharacter(
+            id = "gear",
+            attributes = attrs,
+            gear = CharacterGear(
+                items = listOf(
+                    GearItem(uid = "a", quantity = 2, load = 4.0, carried = true),
+                    GearItem(uid = "b", quantity = 1, load = 99.0, carried = false),
+                ),
+            ),
+        )
+        assertEquals(8.0, MagicEquipmentRules.equipmentLoad(character), 0.001)
+        assertEquals(7, MagicEquipmentRules.equipmentCapacity(character))
+        assertEquals("Лёгкая нагрузка", MagicEquipmentRules.burden(character).title)
+        assertEquals(-1, MagicEquipmentRules.burden(character).penalty)
+    }
+
+    @Test
+    fun developmentRequirementsCanReadMagicState() {
+        val entry = DevelopmentEntry(
+            id = "magic-gated",
+            name = "Магический тест",
+            section = "Тест",
+            category = "Тест",
+            cost = 10,
+            costType = DevelopmentCostType.XP,
+            maxRank = 1,
+            requirements = "Базовый запас маны 3, Сила магии 2, Знать 1 заклинание",
+            benefit = "",
+            notes = "",
+            tags = emptyList(),
+            accessId = null,
+            abilityOptions = emptyList(),
+            incomplete = false,
+            repeatable = false,
+            perfectRoot = false,
+            mechanicsConflict = "",
+            conflictNote = "",
+        )
+        val character = DublCharacter(
+            id = "magic-req",
+            magic = CharacterMagic(
+                manaRank = 3,
+                power = 2,
+                spells = listOf(KnownSpell(uid = "spell", name = "Искра", learned = true)),
+            ),
+        )
+        val rules = DevelopmentRules(character, DevelopmentCatalog("test", listOf(entry)), DevelopmentProgress())
+        assertTrue(rules.requirements(entry).all { it.status == RequirementStatus.OK })
+        assertTrue(rules.availability(entry).canIncrease)
+    }
+}

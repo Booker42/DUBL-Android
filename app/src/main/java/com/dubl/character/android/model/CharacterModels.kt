@@ -34,6 +34,8 @@ data class DublCharacter(
     val skills: Map<String, CharacterSkill> = emptyMap(),
     val hiddenSkillIds: Set<String> = emptySet(),
     val development: Map<String, OwnedDevelopment> = emptyMap(),
+    val magic: CharacterMagic = CharacterMagic(),
+    val gear: CharacterGear = CharacterGear(),
 ) {
     fun attributeRaw(id: AttributeId): Int = attributes[id]?.total ?: 0
 
@@ -50,12 +52,15 @@ data class DublCharacter(
     val perception: Int get() = attribute(AttributeId.PERCEPTION)
     val will: Int get() = attribute(AttributeId.WILL)
 
-    val defense: Int get() = 10 - size + speed + dexterity
+    val equipmentLoadPenalty: Int get() = MagicEquipmentRules.burden(this).penalty
+    val defense: Int get() = 10 - size + speed + dexterity + equipmentLoadPenalty
     val healthMaximum: Int get() = (constitution * size + strength).coerceAtLeast(0)
-    val reflexes: Int get() = speed + dexterity
+    val reflexes: Int get() = speed + dexterity + equipmentLoadPenalty
     val initiative: Int get() = speed + perception
     val fortitude: Int get() = constitution + will
     val abilityPoints: Int get() = experience.coerceAtLeast(0) / 1000
+    val effectiveManaMaximum: Int
+        get() = if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
 
     val runBase: Double
         get() = if (legs >= 3) {
@@ -111,7 +116,7 @@ data class DublCharacter(
                     else -> 4.0
                 }
             }
-            return (runBase + speed * multiplier).coerceAtLeast(0.0)
+            return (runBase + speed * multiplier + equipmentLoadPenalty).coerceAtLeast(0.0)
         }
 
     fun normalized(): DublCharacter {
@@ -121,6 +126,32 @@ data class DublCharacter(
                 attributes = skill.attributes.distinct(),
             )
         }
+        val normalizedMagic = magic.copy(
+            manaRank = magic.manaRank.coerceIn(0, 5),
+            power = if (magic.manaRank > 0) magic.power.coerceAtLeast(1) else magic.power.coerceAtLeast(0),
+            schools = magic.schools.map { school ->
+                school.copy(name = school.name.trim().ifBlank { "Школа" }, rank = school.rank.coerceAtLeast(0), note = school.note.trim())
+            },
+            spells = magic.spells.map { spell ->
+                spell.copy(
+                    name = spell.name.trim().ifBlank { "Заклинание" },
+                    school = spell.school.trim(),
+                    cost = spell.cost.coerceAtLeast(0),
+                    learned = spell.learned,
+                    xpOverride = spell.xpOverride?.coerceAtLeast(0),
+                )
+            }.distinctBy { it.uid },
+        )
+        val normalizedGear = gear.copy(
+            loadManual = gear.loadManual.coerceAtLeast(0.0),
+            items = gear.items.map { item ->
+                item.copy(
+                    name = item.name.trim().ifBlank { "Предмет" },
+                    quantity = item.quantity.coerceAtLeast(0),
+                    load = item.load.coerceAtLeast(0.0),
+                )
+            }.distinctBy { it.uid },
+        )
         val clamped = copy(
             experience = experience.coerceAtLeast(0),
             size = size.coerceIn(1, 10),
@@ -138,10 +169,15 @@ data class DublCharacter(
                     optionIndex = owned.optionIndex.coerceAtLeast(0),
                 )
             }.toMap(linkedMapOf()),
+            magic = normalizedMagic,
+            gear = normalizedGear,
         )
+        val maxMana = clamped.effectiveManaMaximum
         return clamped.copy(
             hpCurrent = clamped.hpCurrent.coerceIn(0, clamped.healthMaximum),
-            manaCurrent = clamped.manaCurrent.coerceIn(0, clamped.manaMaximum),
+            manaCurrent = clamped.manaCurrent.coerceIn(0, maxMana),
+            manaEnabled = clamped.manaEnabled || clamped.magic.manaRank > 0,
+            manaMaximum = if (clamped.magic.manaRank > 0) maxMana else clamped.manaMaximum.coerceAtLeast(0),
         )
     }
 }

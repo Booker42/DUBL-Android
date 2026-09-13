@@ -7,6 +7,12 @@ import com.dubl.character.android.data.CharacterRepository
 import com.dubl.character.android.model.AppSnapshot
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterSkill
+import com.dubl.character.android.model.GearCatalogEntry
+import com.dubl.character.android.model.GearItem
+import com.dubl.character.android.model.KnownSpell
+import com.dubl.character.android.model.MagicEquipmentRules
+import com.dubl.character.android.model.MagicSchool
+import com.dubl.character.android.model.SpellCatalogEntry
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.OwnedDevelopment
 import com.dubl.character.android.model.SkillCatalog
@@ -76,6 +82,154 @@ class CharacterController(private val repository: CharacterRepository) {
             )
         }
         character.copy(development = next)
+    }
+
+
+    fun setMagicManaRank(rank: Int) = updateActive { character ->
+        val nextRank = rank.coerceIn(0, 5)
+        val nextPower = if (nextRank > 0) character.magic.power.coerceAtLeast(1) else character.magic.power
+        character.copy(
+            magic = character.magic.copy(manaRank = nextRank, power = nextPower),
+            development = character.development - MagicEquipmentRules.BASE_MANA_ENTRY_ID,
+            manaEnabled = if (nextRank > 0) true else false,
+            manaCurrent = if (nextRank > 0) character.manaCurrent else 0,
+            manaMaximum = if (nextRank > 0) character.manaMaximum else 0,
+        )
+    }
+
+    fun setMagicPower(power: Int) = updateActive { character ->
+        val nextPower = if (character.magic.manaRank > 0) power.coerceAtLeast(1) else power.coerceAtLeast(0)
+        character.copy(magic = character.magic.copy(power = nextPower))
+    }
+
+    fun addMagicSchool(name: String, rank: Int, note: String): Boolean {
+        val clean = name.trim().replace(Regex("\\s+"), " ")
+        if (clean.isBlank()) return false
+        if (active.magic.schools.any { it.name.equals(clean, ignoreCase = true) }) return false
+        updateActive { character ->
+            character.copy(
+                magic = character.magic.copy(
+                    schools = character.magic.schools + MagicSchool(clean, rank.coerceAtLeast(0), note.trim()),
+                ),
+            )
+        }
+        return true
+    }
+
+    fun updateMagicSchool(index: Int, name: String, rank: Int, note: String) = updateActive { character ->
+        if (index !in character.magic.schools.indices) return@updateActive character
+        val next = character.magic.schools.toMutableList()
+        next[index] = next[index].copy(
+            name = name.trim().ifBlank { next[index].name },
+            rank = rank.coerceAtLeast(0),
+            note = note.trim(),
+        )
+        character.copy(magic = character.magic.copy(schools = next))
+    }
+
+    fun removeMagicSchool(index: Int) = updateActive { character ->
+        if (index !in character.magic.schools.indices) return@updateActive character
+        character.copy(magic = character.magic.copy(schools = character.magic.schools.filterIndexed { i, _ -> i != index }))
+    }
+
+    fun addCatalogSpell(entry: SpellCatalogEntry): Boolean {
+        if (active.magic.spells.any {
+                it.catalogId == entry.id || it.name.equals(entry.name, ignoreCase = true)
+            }) return false
+        val spell = KnownSpell(
+            uid = UUID.randomUUID().toString(),
+            catalogId = entry.id,
+            name = entry.name,
+            school = entry.school,
+            cost = entry.cost,
+            manaText = entry.manaText,
+            time = entry.time,
+            range = entry.range,
+            area = entry.area,
+            action = entry.action,
+            duration = entry.duration,
+            description = entry.description,
+            enhancement = entry.enhancement,
+            learned = true,
+            incomplete = entry.incomplete,
+            conflictNote = entry.conflictNote,
+        )
+        updateActive { character -> character.copy(magic = character.magic.copy(spells = character.magic.spells + spell)) }
+        return true
+    }
+
+    fun addCustomSpell(spell: KnownSpell): String {
+        val uid = spell.uid.ifBlank { UUID.randomUUID().toString() }
+        updateActive { character ->
+            character.copy(
+                magic = character.magic.copy(
+                    spells = character.magic.spells + spell.copy(uid = uid, catalogId = null, custom = true),
+                ),
+            )
+        }
+        return uid
+    }
+
+    fun updateSpell(uid: String, transform: (KnownSpell) -> KnownSpell) = updateActive { character ->
+        character.copy(
+            magic = character.magic.copy(
+                spells = character.magic.spells.map { if (it.uid == uid) transform(it).copy(uid = uid) else it },
+            ),
+        )
+    }
+
+    fun removeSpell(uid: String) = updateActive { character ->
+        character.copy(magic = character.magic.copy(spells = character.magic.spells.filterNot { it.uid == uid }))
+    }
+
+    fun setGearLoadAutomatic(enabled: Boolean) = updateActive { character ->
+        character.copy(gear = character.gear.copy(loadAutomatic = enabled))
+    }
+
+    fun setGearManualLoad(value: Double) = updateActive { character ->
+        character.copy(gear = character.gear.copy(loadManual = value.coerceAtLeast(0.0)))
+    }
+
+    fun addCatalogGear(entry: GearCatalogEntry): String {
+        val uid = UUID.randomUUID().toString()
+        val requirement = entry.fields["Треб."] ?: entry.fields["Требование"] ?: "0"
+        val load = requirement.replace(',', '.').toDoubleOrNull() ?: 0.0
+        val item = GearItem(
+            uid = uid,
+            catalogId = entry.id,
+            name = entry.name,
+            quantity = 1,
+            load = load.coerceAtLeast(0.0),
+            carried = true,
+            description = entry.description,
+            category = entry.category,
+            section = entry.section,
+            fields = entry.fields,
+        )
+        updateActive { character -> character.copy(gear = character.gear.copy(items = character.gear.items + item)) }
+        return uid
+    }
+
+    fun addCustomGear(item: GearItem): String {
+        val uid = item.uid.ifBlank { UUID.randomUUID().toString() }
+        updateActive { character ->
+            character.copy(
+                gear = character.gear.copy(items = character.gear.items + item.copy(uid = uid, catalogId = null, custom = true)),
+            )
+        }
+        return uid
+    }
+
+    fun updateGearItem(uid: String, transform: (GearItem) -> GearItem) = updateActive { character ->
+        character.copy(
+            gear = character.gear.copy(
+                items = character.gear.items.map { if (it.uid == uid) transform(it).copy(uid = uid) else it },
+            ),
+        )
+    }
+
+    fun removeGearItem(uid: String) = updateActive { character ->
+        character.copy(gear = character.gear.copy(items = character.gear.items.filterNot { it.uid == uid }))
     }
 
     fun addSpecializedSkill(templateId: String, specialization: String): String? {

@@ -4,7 +4,12 @@ import android.content.Context
 import com.dubl.character.android.model.AppSnapshot
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.AttributeValue
+import com.dubl.character.android.model.CharacterGear
+import com.dubl.character.android.model.CharacterMagic
 import com.dubl.character.android.model.CharacterSkill
+import com.dubl.character.android.model.GearItem
+import com.dubl.character.android.model.KnownSpell
+import com.dubl.character.android.model.MagicSchool
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.OwnedDevelopment
 import com.dubl.character.android.model.UntrainedRule
@@ -37,7 +42,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 3)
+        put("schema", 4)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -76,6 +81,71 @@ class CharacterRepository(context: Context) {
                     put("id", id)
                     put("rank", owned.rank)
                     put("option", owned.optionIndex)
+                })
+            }
+        })
+        put("magic", encodeMagic(character.magic))
+        put("gear", encodeGear(character.gear))
+    }
+
+
+    private fun encodeMagic(magic: CharacterMagic): JSONObject = JSONObject().apply {
+        put("manaRank", magic.manaRank)
+        put("power", magic.power)
+        put("schools", JSONArray().apply {
+            magic.schools.forEach { school ->
+                put(JSONObject().apply {
+                    put("name", school.name)
+                    put("rank", school.rank)
+                    put("note", school.note)
+                })
+            }
+        })
+        put("spells", JSONArray().apply {
+            magic.spells.forEach { spell ->
+                put(JSONObject().apply {
+                    put("uid", spell.uid)
+                    spell.catalogId?.let { put("catalogId", it) }
+                    put("name", spell.name)
+                    put("school", spell.school)
+                    put("cost", spell.cost)
+                    put("manaText", spell.manaText)
+                    put("time", spell.time)
+                    put("range", spell.range)
+                    put("area", spell.area)
+                    put("action", spell.action)
+                    put("duration", spell.duration)
+                    put("description", spell.description)
+                    put("enhancement", spell.enhancement)
+                    put("learned", spell.learned)
+                    spell.xpOverride?.let { put("xpOverride", it) }
+                    put("incomplete", spell.incomplete)
+                    put("conflictNote", spell.conflictNote)
+                    put("custom", spell.custom)
+                })
+            }
+        })
+    }
+
+    private fun encodeGear(gear: CharacterGear): JSONObject = JSONObject().apply {
+        put("loadAutomatic", gear.loadAutomatic)
+        put("loadManual", gear.loadManual)
+        put("items", JSONArray().apply {
+            gear.items.forEach { item ->
+                put(JSONObject().apply {
+                    put("uid", item.uid)
+                    item.catalogId?.let { put("catalogId", it) }
+                    put("name", item.name)
+                    put("quantity", item.quantity)
+                    put("load", item.load)
+                    put("carried", item.carried)
+                    put("description", item.description)
+                    put("category", item.category)
+                    put("section", item.section)
+                    put("custom", item.custom)
+                    put("fields", JSONObject().apply {
+                        item.fields.forEach { (key, value) -> put(key, value) }
+                    })
                 })
             }
         })
@@ -148,6 +218,9 @@ class CharacterRepository(context: Context) {
             )
         }
 
+        val magic = decodeMagic(root.optJSONObject("magic"))
+        val gear = decodeGear(root.optJSONObject("gear"))
+
         return DublCharacter(
             id = root.optString("id").ifBlank { UUID.randomUUID().toString() },
             name = root.optString("name", "Новый персонаж"),
@@ -164,7 +237,101 @@ class CharacterRepository(context: Context) {
             skills = skills,
             hiddenSkillIds = hidden,
             development = development,
+            magic = magic,
+            gear = gear,
         ).normalized()
+    }
+
+
+    private fun decodeMagic(root: JSONObject?): CharacterMagic {
+        if (root == null) return CharacterMagic()
+        val schools = buildList {
+            val array = root.optJSONArray("schools") ?: JSONArray()
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                add(
+                    MagicSchool(
+                        name = item.optString("name", "Школа"),
+                        rank = item.optInt("rank", item.optInt("level", 0)),
+                        note = item.optString("note", ""),
+                    )
+                )
+            }
+        }
+        val spells = buildList {
+            val array = root.optJSONArray("spells") ?: JSONArray()
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val uid = item.optString("uid").ifBlank { UUID.randomUUID().toString() }
+                add(
+                    KnownSpell(
+                        uid = uid,
+                        catalogId = item.optString("catalogId").takeIf { it.isNotBlank() },
+                        name = item.optString("name", "Заклинание"),
+                        school = item.optString("school", ""),
+                        cost = item.optInt("cost", 0),
+                        manaText = item.optString("manaText", ""),
+                        time = item.optString("time", ""),
+                        range = item.optString("range", ""),
+                        area = item.optString("area", ""),
+                        action = item.optString("action", ""),
+                        duration = item.optString("duration", ""),
+                        description = item.optString("description", ""),
+                        enhancement = item.optString("enhancement", ""),
+                        learned = item.optBoolean("learned", true),
+                        xpOverride = if (item.has("xpOverride") && !item.isNull("xpOverride")) item.optInt("xpOverride") else null,
+                        incomplete = item.optBoolean("incomplete", false),
+                        conflictNote = item.optString("conflictNote", ""),
+                        custom = item.optBoolean("custom", false),
+                    )
+                )
+            }
+        }
+        return CharacterMagic(
+            manaRank = root.optInt("manaRank", 0),
+            power = root.optInt("power", 0),
+            schools = schools,
+            spells = spells,
+        )
+    }
+
+    private fun decodeGear(root: JSONObject?): CharacterGear {
+        if (root == null) return CharacterGear()
+        val items = buildList {
+            val array = root.optJSONArray("items") ?: JSONArray()
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val fieldsRoot = item.optJSONObject("fields")
+                val fields = linkedMapOf<String, String>()
+                if (fieldsRoot != null) {
+                    val keys = fieldsRoot.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        fields[key] = fieldsRoot.optString(key, "")
+                    }
+                }
+                add(
+                    GearItem(
+                        uid = item.optString("uid").ifBlank { UUID.randomUUID().toString() },
+                        catalogId = item.optString("catalogId").takeIf { it.isNotBlank() },
+                        name = item.optString("name", "Предмет"),
+                        quantity = item.optInt("quantity", item.optInt("qty", 1)),
+                        load = item.optDouble("load", 0.0),
+                        carried = item.optBoolean("carried", true),
+                        description = item.optString("description", ""),
+                        category = item.optString("category", "Снаряжение"),
+                        section = item.optString("section", "Предметы"),
+                        fields = fields,
+                        custom = item.optBoolean("custom", false),
+                    )
+                )
+            }
+        }
+        return CharacterGear(
+            loadAutomatic = root.optBoolean("loadAutomatic", true),
+            loadManual = root.optDouble("loadManual", 0.0),
+            items = items,
+        )
     }
 
     private fun decodeSkill(root: JSONObject): CharacterSkill? {

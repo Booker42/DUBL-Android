@@ -185,6 +185,7 @@ class DevelopmentRules(
     }
 
     fun featureRank(name: String): Int {
+        if (developmentAlias(name) == developmentAlias("Базовый запас маны")) return character.magic.manaRank
         val known = catalog.matchingName(name)
         val preferred = known.filterNot { it.isAbility }.ifEmpty { known }
         return preferred.maxOfOrNull { progress.rank(it.id) } ?: 0
@@ -301,13 +302,22 @@ class DevelopmentRules(
         }
 
         if (Regex("^(?:Базовый\\s+)?[Зз]апас маны", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
-            return RequirementCheck(RequirementStatus.MANUAL, "$text — система магии ещё не подключена к этой вкладке")
+            val needMana = Regex("(\\d+)").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+            return valueCheck("Базовый запас маны", character.magic.manaRank, needMana)
         }
         if (developmentNormalize(text).startsWith("заклинание:")) {
-            return RequirementCheck(RequirementStatus.MANUAL, "$text — система заклинаний ещё не подключена")
+            val requested = text.substringAfter(':').trim()
+            val learned = character.magic.spells.any { it.learned && developmentAlias(it.name) == developmentAlias(requested) }
+            return RequirementCheck(
+                if (learned) RequirementStatus.OK else RequirementStatus.FAIL,
+                if (learned) "Заклинание: $requested" else "Заклинание: $requested — не изучено",
+            )
         }
-        if (Regex("^Знать\\s*\\d+\\s*заклинани", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
-            return RequirementCheck(RequirementStatus.MANUAL, "$text — требуется проверка заклинаний")
+        val spellCountRequirement = Regex("^Знать\\s*(\\d+)\\s*заклинани", RegexOption.IGNORE_CASE).find(text)
+        if (spellCountRequirement != null) {
+            val needSpells = spellCountRequirement.groupValues[1].toIntOrNull() ?: 0
+            val haveSpells = character.magic.spells.count { it.learned }
+            return valueCheck("Изученные заклинания", haveSpells, needSpells)
         }
 
         val numeric = Regex("^(.+?)\\s*:?\\s*(\\d+)(?:\\s*ранг(?:а|ов)?)?$", RegexOption.IGNORE_CASE)
@@ -404,10 +414,7 @@ class DevelopmentRules(
                 val actual = maxOf(skillRank("Холодное оружие"), skillRank("Рукопашный бой"))
                 return valueCheck(originalName, actual, need)
             }
-            "сила магии", "сила заклинаний" -> return RequirementCheck(
-                RequirementStatus.MANUAL,
-                "$originalName $need — система магии ещё не подключена",
-            )
+            "сила магии", "сила заклинаний" -> return valueCheck(originalName, character.magic.power, need)
         }
 
         if (normalizedName.startsWith("любые два умения")) {

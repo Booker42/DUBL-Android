@@ -40,9 +40,10 @@ import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.CharacterRepository
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.screens.CharactersScreen
+import com.dubl.character.android.ui.screens.EquipmentScreen
 import com.dubl.character.android.ui.screens.FeatsScreen
+import com.dubl.character.android.ui.screens.MagicScreen
 import com.dubl.character.android.ui.screens.OverviewScreen
-import com.dubl.character.android.ui.screens.PlaceholderScreen
 import com.dubl.character.android.ui.screens.SkillsScreen
 import com.dubl.character.android.ui.theme.DublAccentSoft
 import com.dubl.character.android.ui.theme.DublFocus
@@ -84,14 +85,8 @@ fun DublApp() {
                 AppSection.OVERVIEW -> OverviewScreen(controller)
                 AppSection.SKILLS -> SkillsScreen(controller)
                 AppSection.FEATS -> FeatsScreen(controller)
-                AppSection.MAGIC -> PlaceholderScreen(
-                    "Магия",
-                    "Следом перенесём силу магии, школы, уровни школ, заклинания и расход маны.",
-                )
-                AppSection.INVENTORY -> PlaceholderScreen(
-                    "Инвентарь",
-                    "Здесь будет нативная экипировка, предметы и быстрые действия без desktop-таблиц.",
-                )
+                AppSection.MAGIC -> MagicScreen(controller)
+                AppSection.INVENTORY -> EquipmentScreen(controller)
                 AppSection.MORE -> CharactersScreen(controller)
             }
         }
@@ -120,7 +115,7 @@ private fun DublBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
+                    .height(68.dp)
                     .padding(horizontal = 4.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -130,7 +125,7 @@ private fun DublBottomBar(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .height(54.dp)
+                            .height(58.dp)
                             .clickable { onSelected(section) },
                         shape = RoundedCornerShape(13.dp),
                         color = if (active) DublAccentSoft.copy(alpha = 0.92f) else DublSurfaceInset,
@@ -172,10 +167,10 @@ private fun DublNavIcon(
     section: AppSection,
     color: Color,
 ) {
-    Canvas(modifier = Modifier.size(20.dp)) {
+    Canvas(modifier = Modifier.size(26.dp)) {
         val w = size.width
         val h = size.height
-        val stroke = 1.65.dp.toPx()
+        val stroke = 1.9.dp.toPx()
         val cap = StrokeCap.Round
 
         when (section) {
