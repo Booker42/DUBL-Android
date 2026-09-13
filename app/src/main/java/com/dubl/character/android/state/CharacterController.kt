@@ -36,7 +36,51 @@ class CharacterController(private val repository: CharacterRepository) {
 
     fun changeAttribute(id: AttributeId, delta: Int) = updateActive { character ->
         val current = character.attributes.getValue(id)
-        character.copy(attributes = character.attributes + (id to current.copy(base = current.base + delta)))
+        val nextBase = (current.base + delta).coerceIn(-5, 10)
+        val updated = character.copy(
+            attributes = character.attributes + (id to current.copy(base = nextBase)),
+        )
+        if (character.creationComplete) updated else updated.copy(hpCurrent = updated.healthMaximum)
+    }
+
+    fun setExperience(total: Int) = updateActive { character ->
+        val clean = total.coerceAtLeast(0)
+        character.copy(
+            experience = clean,
+            creationExperience = if (character.creationComplete) {
+                character.creationExperience.coerceAtMost(clean)
+            } else {
+                clean
+            },
+        )
+    }
+
+    fun setCreationExperience(value: Int) = updateActive { character ->
+        character.copy(creationExperience = value.coerceIn(0, character.experience.coerceAtLeast(0)))
+    }
+
+    fun setXpAdjustment(value: Int) = updateActive { character ->
+        character.copy(xpAdjustment = value.coerceIn(-1_000_000, 1_000_000))
+    }
+
+    fun setAbilityPointsOverride(value: Int?) = updateActive { character ->
+        character.copy(abilityPointsOverride = value?.coerceAtLeast(0))
+    }
+
+    fun completeCreation() = updateActive { character ->
+        if (character.creationComplete) return@updateActive character
+        val creationXp = character.effectiveCreationExperience.coerceAtMost(character.experience)
+        val fullMana = if (character.magic.manaRank > 0) MagicEquipmentRules.manaMaximum(character) else character.manaCurrent
+        character.copy(
+            creationExperience = creationXp,
+            creationComplete = true,
+            hpCurrent = character.healthMaximum,
+            manaCurrent = fullMana,
+        )
+    }
+
+    fun reopenCreation() = updateActive { character ->
+        character.copy(creationComplete = false)
     }
 
     fun changeHp(delta: Int) = updateActive { it.copy(hpCurrent = it.hpCurrent + delta) }
@@ -81,25 +125,38 @@ class CharacterController(private val repository: CharacterRepository) {
                 optionIndex = optionIndex.coerceAtLeast(0),
             )
         }
-        character.copy(development = next)
+        var updated = character.copy(development = next)
+        if (!character.creationComplete && entryId == MagicEquipmentRules.INCREASED_MANA_ENTRY_ID && updated.magic.manaRank > 0) {
+            updated = updated.copy(manaCurrent = MagicEquipmentRules.manaMaximum(updated))
+        }
+        updated
     }
 
 
     fun setMagicManaRank(rank: Int) = updateActive { character ->
         val nextRank = rank.coerceIn(0, 5)
+        if (character.creationComplete && nextRank != character.magic.manaRank) return@updateActive character
         val nextPower = if (nextRank > 0) character.magic.power.coerceAtLeast(1) else character.magic.power
-        character.copy(
+        var updated = character.copy(
             magic = character.magic.copy(manaRank = nextRank, power = nextPower),
             development = character.development - MagicEquipmentRules.BASE_MANA_ENTRY_ID,
-            manaEnabled = if (nextRank > 0) true else false,
+            manaEnabled = nextRank > 0,
             manaCurrent = if (nextRank > 0) character.manaCurrent else 0,
             manaMaximum = if (nextRank > 0) character.manaMaximum else 0,
         )
+        if (!character.creationComplete && nextRank > 0) {
+            updated = updated.copy(manaCurrent = MagicEquipmentRules.manaMaximum(updated))
+        }
+        updated
     }
 
     fun setMagicPower(power: Int) = updateActive { character ->
         val nextPower = if (character.magic.manaRank > 0) power.coerceAtLeast(1) else power.coerceAtLeast(0)
-        character.copy(magic = character.magic.copy(power = nextPower))
+        var updated = character.copy(magic = character.magic.copy(power = nextPower))
+        if (!character.creationComplete && character.magic.manaRank > 0) {
+            updated = updated.copy(manaCurrent = MagicEquipmentRules.manaMaximum(updated))
+        }
+        updated
     }
 
     fun addMagicSchool(name: String, rank: Int, note: String): Boolean {

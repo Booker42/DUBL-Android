@@ -60,4 +60,33 @@ class CharacterNormalizationTest {
         assertFalse(character.manaEnabled)
         assertEquals(0, character.manaCurrent)
     }
+    @Test
+    fun normalizationKeepsPricedAttributesInsideRulebookRange() {
+        val character = DublCharacter(
+            id = "attributes",
+            attributes = defaultAttributes() + mapOf(
+                AttributeId.STRENGTH to AttributeValue(base = 99),
+                AttributeId.DEXTERITY to AttributeValue(base = -99),
+            ),
+        ).normalized()
+
+        assertEquals(10, character.attributes.getValue(AttributeId.STRENGTH).base)
+        assertEquals(-5, character.attributes.getValue(AttributeId.DEXTERITY).base)
+    }
+
+    @Test
+    fun legacyBaseManaDevelopmentMigratesIntoMagicWithoutDoubleCounting() {
+        val character = DublCharacter(
+            id = "legacy-mana",
+            development = mapOf(
+                MagicEquipmentRules.BASE_MANA_ENTRY_ID to OwnedDevelopment(rank = 3),
+            ),
+            magic = CharacterMagic(manaRank = 0, power = 4),
+        ).normalized()
+
+        assertEquals(3, character.magic.manaRank)
+        assertFalse(character.development.containsKey(MagicEquipmentRules.BASE_MANA_ENTRY_ID))
+        assertTrue(character.manaEnabled)
+    }
+
 }

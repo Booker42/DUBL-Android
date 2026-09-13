@@ -23,6 +23,10 @@ data class DublCharacter(
     val name: String = "Новый персонаж",
     val concept: String = "",
     val experience: Int = 0,
+    val creationExperience: Int = 0,
+    val creationComplete: Boolean = false,
+    val xpAdjustment: Int = 0,
+    val abilityPointsOverride: Int? = null,
     val size: Int = 5,
     val legs: Int = 2,
     val attributes: Map<AttributeId, AttributeValue> = defaultAttributes(),
@@ -58,7 +62,14 @@ data class DublCharacter(
     val reflexes: Int get() = speed + dexterity + equipmentLoadPenalty
     val initiative: Int get() = speed + perception
     val fortitude: Int get() = constitution + will
-    val abilityPoints: Int get() = experience.coerceAtLeast(0) / 1000
+    val effectiveCreationExperience: Int
+        get() = when {
+            creationExperience > 0 -> creationExperience.coerceAtMost(experience.coerceAtLeast(0))
+            !creationComplete -> experience.coerceAtLeast(0)
+            else -> 0
+        }
+    val recommendedAbilityPoints: Int get() = effectiveCreationExperience / 1000
+    val abilityPoints: Int get() = abilityPointsOverride ?: recommendedAbilityPoints
     val effectiveManaMaximum: Int
         get() = if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
 
@@ -126,9 +137,14 @@ data class DublCharacter(
                 attributes = skill.attributes.distinct(),
             )
         }
+        val normalizedAttributes = attributes.mapValues { (_, value) ->
+            value.copy(base = value.base.coerceIn(-5, 10))
+        }
+        val legacyManaRank = development[MagicEquipmentRules.BASE_MANA_ENTRY_ID]?.rank?.coerceIn(0, 5) ?: 0
+        val normalizedManaRank = maxOf(magic.manaRank.coerceIn(0, 5), legacyManaRank)
         val normalizedMagic = magic.copy(
-            manaRank = magic.manaRank.coerceIn(0, 5),
-            power = if (magic.manaRank > 0) magic.power.coerceAtLeast(1) else magic.power.coerceAtLeast(0),
+            manaRank = normalizedManaRank,
+            power = if (normalizedManaRank > 0) magic.power.coerceAtLeast(1) else magic.power.coerceAtLeast(0),
             schools = magic.schools.map { school ->
                 school.copy(name = school.name.trim().ifBlank { "Школа" }, rank = school.rank.coerceAtLeast(0), note = school.note.trim())
             },
@@ -152,9 +168,15 @@ data class DublCharacter(
                 )
             }.distinctBy { it.uid },
         )
+        val normalizedExperience = experience.coerceAtLeast(0)
+        val normalizedCreationExperience = creationExperience.coerceAtLeast(0).coerceAtMost(normalizedExperience)
         val clamped = copy(
-            experience = experience.coerceAtLeast(0),
+            experience = normalizedExperience,
+            creationExperience = normalizedCreationExperience,
+            xpAdjustment = xpAdjustment.coerceIn(-1_000_000, 1_000_000),
+            abilityPointsOverride = abilityPointsOverride?.coerceAtLeast(0),
             size = size.coerceIn(1, 10),
+            attributes = normalizedAttributes,
             legs = legs.coerceAtLeast(2),
             enduranceCurrent = enduranceCurrent.coerceIn(0, 3),
             manaMaximum = manaMaximum.coerceAtLeast(0),
@@ -164,7 +186,7 @@ data class DublCharacter(
             },
             development = development.mapNotNull { (id, owned) ->
                 val rank = owned.rank.coerceAtLeast(0)
-                if (rank == 0 || id.isBlank()) null else id to owned.copy(
+                if (rank == 0 || id.isBlank() || id == MagicEquipmentRules.BASE_MANA_ENTRY_ID) null else id to owned.copy(
                     rank = rank,
                     optionIndex = owned.optionIndex.coerceAtLeast(0),
                 )

@@ -142,9 +142,10 @@ class DevelopmentRules(
 
     fun abilityPointsBudget(): Int = character.abilityPoints
 
-    fun abilityPointsAvailable(): Int = (abilityPointsBudget() - abilityPointsSpent()).coerceAtLeast(0)
+    fun abilityPointsAvailable(): Int = abilityPointsBudget() - abilityPointsSpent()
 
     fun xpSpentOnDevelopment(): Int = progress.owned.entries.sumOf { (id, owned) ->
+        if (id == MagicEquipmentRules.BASE_MANA_ENTRY_ID) return@sumOf 0
         val entry = catalog.byId(id) ?: return@sumOf 0
         if (entry.isAbility) 0 else entry.cost.coerceAtLeast(0) * owned.rank
     }
@@ -164,14 +165,14 @@ class DevelopmentRules(
         val failed = checks.any { it.status == RequirementStatus.FAIL }
         val manual = checks.any { it.status == RequirementStatus.MANUAL }
         val maxed = currentRank >= entry.maxRank.coerceAtLeast(1)
-        val insufficientPoints = entry.isAbility && currentRank == 0 && abilityCost > abilityPointsAvailable()
-        val canIncrease = !entry.incomplete && !failed && !manual && !maxed && !insufficientPoints
+        // The rulebook phrases the OS budget as a recommendation, not a hard limit.
+        // Overspending is surfaced by the budget summary but does not invalidate a GM-approved build.
+        val canIncrease = !entry.incomplete && !failed && !manual && !maxed
         val reason = when {
             entry.incomplete -> "Запись книги не завершена"
             maxed -> "Максимальный ранг"
             failed -> "Не выполнены требования"
             manual -> "Требуется ручная проверка"
-            insufficientPoints -> "Недостаточно очков способностей"
             else -> "Можно получить"
         }
         return DevelopmentAvailability(
@@ -273,7 +274,14 @@ class DevelopmentRules(
             return RequirementCheck(RequirementStatus.OK, "Без требований")
         }
 
-        if (Regex("при создании|на усмотрение|согласован", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
+        if (Regex("только\\s+при\\s+создании|при\\s+создании\\s+персонажа", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
+            val alreadyOwned = progress.rank(entry.id) > 0
+            return RequirementCheck(
+                if (!character.creationComplete || alreadyOwned) RequirementStatus.OK else RequirementStatus.FAIL,
+                if (character.creationComplete && !alreadyOwned) "$text — создание уже завершено" else text,
+            )
+        }
+        if (Regex("на усмотрение|согласован", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
             return RequirementCheck(RequirementStatus.MANUAL, text)
         }
 

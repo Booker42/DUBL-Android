@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.DevelopmentCatalogRepository
+import com.dubl.character.android.model.CharacterEconomy
 import com.dubl.character.android.model.DevelopmentCatalog
 import com.dubl.character.android.model.DevelopmentCostType
 import com.dubl.character.android.model.DevelopmentEntry
@@ -90,6 +91,7 @@ fun FeatsScreen(controller: CharacterController) {
     val rules = remember(character, progress, catalog) {
         DevelopmentRules(character, catalog, progress)
     }
+    val economy = remember(character, catalog) { CharacterEconomy.breakdown(character, catalog) }
 
     fun increase(entry: DevelopmentEntry, optionIndex: Int) {
         val availability = rules.availability(entry, optionIndex)
@@ -156,7 +158,7 @@ fun FeatsScreen(controller: CharacterController) {
         }
 
         item {
-            DevelopmentBudgetCard(rules)
+            DevelopmentBudgetCard(rules, economy.remainingXp)
         }
 
         item {
@@ -292,6 +294,13 @@ fun FeatsScreen(controller: CharacterController) {
                         Text("Источник: ${option.source}")
                     }
                     Text("Будет потрачено $cost ОС.")
+                    if (character.creationComplete) {
+                        Text(
+                            "Создание уже завершено. Книга описывает покупку способностей за ОС при создании; продолжайте только по решению мастера.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DublGold,
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -311,7 +320,7 @@ fun FeatsScreen(controller: CharacterController) {
 }
 
 @Composable
-private fun DevelopmentBudgetCard(rules: DevelopmentRules) {
+private fun DevelopmentBudgetCard(rules: DevelopmentRules, xpRemaining: Int) {
     val available = rules.abilityPointsAvailable()
     val budget = rules.abilityPointsBudget()
     val spent = rules.abilityPointsSpent()
@@ -336,7 +345,7 @@ private fun DevelopmentBudgetCard(rules: DevelopmentRules) {
                     "$available доступно",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = if (available > 0) DublGold else MaterialTheme.colorScheme.onSurface,
+                    color = when { available < 0 -> DublDanger; available > 0 -> DublGold; else -> MaterialTheme.colorScheme.onSurface },
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -347,9 +356,9 @@ private fun DevelopmentBudgetCard(rules: DevelopmentRules) {
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "${rules.xpSpentOnDevelopment()} XP в навыках",
+                    "${rules.xpSpentOnDevelopment()} XP в навыках · $xpRemaining XP осталось",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (xpRemaining < 0) DublDanger else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

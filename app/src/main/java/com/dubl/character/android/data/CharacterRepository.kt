@@ -42,7 +42,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 4)
+        put("schema", 5)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -54,6 +54,10 @@ class CharacterRepository(context: Context) {
         put("name", character.name)
         put("concept", character.concept)
         put("experience", character.experience)
+        put("creationExperience", character.creationExperience)
+        put("creationComplete", character.creationComplete)
+        put("xpAdjustment", character.xpAdjustment)
+        character.abilityPointsOverride?.let { put("abilityPointsOverride", it) }
         put("size", character.size)
         put("legs", character.legs)
         put("hpCurrent", character.hpCurrent)
@@ -164,11 +168,12 @@ class CharacterRepository(context: Context) {
     }
 
     private fun decodeSnapshot(root: JSONObject): AppSnapshot {
+        val schema = root.optInt("schema", 1)
         val array = root.optJSONArray("characters") ?: JSONArray()
         val characters = buildList {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                add(decodeCharacter(item))
+                add(decodeCharacter(item, schema))
             }
         }
         if (characters.isEmpty()) return freshSnapshot()
@@ -178,7 +183,7 @@ class CharacterRepository(context: Context) {
         return AppSnapshot(characters, active)
     }
 
-    private fun decodeCharacter(root: JSONObject): DublCharacter {
+    private fun decodeCharacter(root: JSONObject, schema: Int): DublCharacter {
         val attributes = defaultAttributes().toMutableMap()
         val jsonAttributes = root.optJSONObject("attributes")
         AttributeId.entries.forEach { id ->
@@ -221,11 +226,31 @@ class CharacterRepository(context: Context) {
         val magic = decodeMagic(root.optJSONObject("magic"))
         val gear = decodeGear(root.optJSONObject("gear"))
 
+        val experience = root.optInt("experience", 0).coerceAtLeast(0)
+        val creationExperience = if (root.has("creationExperience")) {
+            root.optInt("creationExperience", experience).coerceAtLeast(0)
+        } else {
+            experience
+        }
+        val creationComplete = if (root.has("creationComplete")) {
+            root.optBoolean("creationComplete", false)
+        } else {
+            // Existing pre-v5 characters are treated as already created so migration
+            // never grants creation-only purchases or auto-restores resources.
+            schema < 5
+        }
+
         return DublCharacter(
             id = root.optString("id").ifBlank { UUID.randomUUID().toString() },
             name = root.optString("name", "Новый персонаж"),
             concept = root.optString("concept", ""),
-            experience = root.optInt("experience", 0),
+            experience = experience,
+            creationExperience = creationExperience,
+            creationComplete = creationComplete,
+            xpAdjustment = root.optInt("xpAdjustment", 0),
+            abilityPointsOverride = if (root.has("abilityPointsOverride") && !root.isNull("abilityPointsOverride")) {
+                root.optInt("abilityPointsOverride").coerceAtLeast(0)
+            } else null,
             size = root.optInt("size", 5),
             legs = root.optInt("legs", 2),
             attributes = attributes,

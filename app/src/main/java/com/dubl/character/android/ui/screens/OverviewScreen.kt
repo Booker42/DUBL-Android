@@ -74,8 +74,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.dubl.character.android.data.CharacterSheetExtrasRepository
+import com.dubl.character.android.data.DevelopmentCatalogRepository
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterConditionId
+import com.dubl.character.android.model.CharacterEconomy
+import com.dubl.character.android.model.CharacterEconomyBreakdown
 import com.dubl.character.android.model.CharacterSheetResourceId
 import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.ResolvedSkill
@@ -92,6 +95,7 @@ import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.theme.DublAccent
 import com.dubl.character.android.ui.theme.DublAccentSoft
+import com.dubl.character.android.ui.theme.DublDanger
 import com.dubl.character.android.ui.theme.DublGold
 import com.dubl.character.android.ui.theme.DublHealth
 import com.dubl.character.android.ui.theme.DublMana
@@ -122,7 +126,7 @@ private sealed interface UndoAction {
     data class Attribute(val id: AttributeId, val appliedDelta: Int) : UndoAction
     data class Conditions(val previous: Set<CharacterConditionId>) : UndoAction
     data class Name(val previous: String) : UndoAction
-    data class Experience(val previous: Int) : UndoAction
+    data class Experience(val previous: Int, val previousCreation: Int) : UndoAction
     data class Size(val previous: Int) : UndoAction
     data class Legs(val previous: Int) : UndoAction
 }
@@ -148,6 +152,12 @@ fun OverviewScreen(controller: CharacterController) {
     val context = LocalContext.current
     val extrasRepository = remember(context.applicationContext) {
         CharacterSheetExtrasRepository(context.applicationContext)
+    }
+    val developmentCatalog = remember(context.applicationContext) {
+        DevelopmentCatalogRepository(context.applicationContext).load()
+    }
+    val economy = remember(character, developmentCatalog) {
+        CharacterEconomy.breakdown(character, developmentCatalog)
     }
     var sheetExtras by remember(character.id) {
         mutableStateOf(extrasRepository.load(character.id))
@@ -235,7 +245,7 @@ fun OverviewScreen(controller: CharacterController) {
             is UndoAction.Attribute -> controller.changeAttribute(action.id, -action.appliedDelta)
             is UndoAction.Conditions -> saveExtras(sheetExtras.copy(activeConditions = action.previous))
             is UndoAction.Name -> controller.updateActive { it.copy(name = action.previous) }
-            is UndoAction.Experience -> controller.updateActive { it.copy(experience = action.previous) }
+            is UndoAction.Experience -> controller.updateActive { it.copy(experience = action.previous, creationExperience = action.previousCreation) }
             is UndoAction.Size -> controller.updateActive { it.copy(size = action.previous) }
             is UndoAction.Legs -> controller.updateActive { it.copy(legs = action.previous) }
             null -> Unit
@@ -253,6 +263,7 @@ fun OverviewScreen(controller: CharacterController) {
             item {
                 CharacterHero(
                     character = character,
+                    economy = economy,
                     portraitUri = sheetExtras.portraitUri,
                     onAdvancedEdit = { showAdvancedEdit = true },
                     onPortraitClick = { portraitPicker.launch(arrayOf("image/*")) },
@@ -336,16 +347,26 @@ fun OverviewScreen(controller: CharacterController) {
             character = character,
             onDismiss = { showAdvancedEdit = false },
             onConfirm = { name, concept, experience, size, legs, manaEnabled, manaMaximum ->
-                controller.updateActive {
-                    it.copy(
+                controller.updateActive { current ->
+                    val cleanExperience = experience.coerceAtLeast(0)
+                    var updated = current.copy(
                         name = name.ifBlank { "Новый персонаж" },
                         concept = concept,
-                        experience = experience,
+                        experience = cleanExperience,
+                        creationExperience = if (current.creationComplete) {
+                            current.creationExperience.coerceAtMost(cleanExperience)
+                        } else {
+                            cleanExperience
+                        },
                         size = size,
                         legs = legs,
                         manaEnabled = manaEnabled,
                         manaMaximum = manaMaximum,
                     )
+                    if (!current.creationComplete) {
+                        updated = updated.copy(hpCurrent = updated.healthMaximum)
+                    }
+                    updated
                 }
                 showAdvancedEdit = false
             },
@@ -377,25 +398,31 @@ fun OverviewScreen(controller: CharacterController) {
     }
 
     if (showExperienceEdit) {
-        TextValueEditSheet(
-            title = "Опыт",
-            initialValue = character.experience.toString(),
-            numeric = true,
-            onSave = { value ->
+        ExperienceEconomySheet(
+            character = character,
+            economy = economy,
+            hasSelfTaught = developmentCatalog.matchingName("Самоучка").any { entry ->
+                (character.development[entry.id]?.rank ?: 0) > 0
+            },
+            onSetExperience = { next ->
                 val previous = character.experience
-                val next = value.toIntOrNull()?.coerceAtLeast(0) ?: 0
-                controller.updateActive { it.copy(experience = next) }
+                val previousCreation = character.creationExperience
+                controller.setExperience(next)
                 if (next != previous) {
                     recordRecent(
                         RecentChange(
-                            text = "Опыт: $previous → $next",
+                            text = "Общий опыт: $previous → $next",
                             accent = DublGold,
-                            undo = UndoAction.Experience(previous),
+                            undo = UndoAction.Experience(previous, previousCreation),
                         ),
                     )
                 }
-                showExperienceEdit = false
             },
+            onSetCreationExperience = controller::setCreationExperience,
+            onSetAdjustment = controller::setXpAdjustment,
+            onSetAbilityOverride = controller::setAbilityPointsOverride,
+            onCompleteCreation = controller::completeCreation,
+            onReopenCreation = controller::reopenCreation,
             onDismiss = { showExperienceEdit = false },
         )
     }
@@ -593,7 +620,10 @@ fun OverviewScreen(controller: CharacterController) {
             onSetSize = { size ->
                 val previous = character.size
                 val next = size.coerceIn(1, 10)
-                controller.updateActive { it.copy(size = next) }
+                controller.updateActive { current ->
+                    val updated = current.copy(size = next)
+                    if (current.creationComplete) updated else updated.copy(hpCurrent = updated.healthMaximum)
+                }
                 if (next != previous) {
                     recordRecent(
                         RecentChange(
@@ -626,6 +656,7 @@ fun OverviewScreen(controller: CharacterController) {
 @Composable
 private fun CharacterHero(
     character: DublCharacter,
+    economy: CharacterEconomyBreakdown,
     portraitUri: String?,
     onAdvancedEdit: () -> Unit,
     onPortraitClick: () -> Unit,
@@ -676,15 +707,16 @@ private fun CharacterHero(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     MetaPill(
-                        label = "Опыт",
-                        value = character.experience.toString(),
+                        label = "XP осталось",
+                        value = "${economy.remainingXp} / ${economy.totalExperience}",
                         modifier = Modifier.weight(1f),
                         onClick = onExperienceClick,
                     )
                     MetaPill(
-                        label = "Очки способностей",
-                        value = character.abilityPoints.toString(),
+                        label = "ОС осталось",
+                        value = "${economy.abilityPointsRemaining} / ${economy.abilityPointsBudget}",
                         modifier = Modifier.weight(1f),
+                        onClick = onExperienceClick,
                     )
                 }
             }
@@ -2565,18 +2597,32 @@ private fun ResourceAdjustSheet(
                 fontWeight = FontWeight.Bold,
                 color = accent,
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(10.dp))
+            val nextCost = CharacterEconomy.nextAttributeCost(base)
+            val refund = CharacterEconomy.previousAttributeRefund(base)
+            Text(
+                buildString {
+                    if (nextCost != null) append("Следующий ранг: $nextCost XP") else append("Максимум по таблице")
+                    if (refund != null) append(" · снижение: возврат $refund XP")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
                     onClick = { onChange(-1) },
+                    enabled = base > -5,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("− 1") }
                 Button(
                     onClick = { onChange(1) },
+                    enabled = base < 10,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("+ 1") }
@@ -2635,18 +2681,32 @@ private fun AttributeAdjustSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(10.dp))
+            val nextCost = CharacterEconomy.nextAttributeCost(base)
+            val refund = CharacterEconomy.previousAttributeRefund(base)
+            Text(
+                buildString {
+                    if (nextCost != null) append("Следующий ранг: $nextCost XP") else append("Максимум по таблице")
+                    if (refund != null) append(" · снижение: возврат $refund XP")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
                     onClick = { onChange(-1) },
+                    enabled = base > -5,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("− 1") }
                 Button(
                     onClick = { onChange(1) },
+                    enabled = base < 10,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
                 ) { Text("+ 1") }
@@ -2783,6 +2843,191 @@ private fun TextValueEditSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExperienceEconomySheet(
+    character: DublCharacter,
+    economy: CharacterEconomyBreakdown,
+    hasSelfTaught: Boolean,
+    onSetExperience: (Int) -> Unit,
+    onSetCreationExperience: (Int) -> Unit,
+    onSetAdjustment: (Int) -> Unit,
+    onSetAbilityOverride: (Int?) -> Unit,
+    onCompleteCreation: () -> Unit,
+    onReopenCreation: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var totalText by remember(character.id) { mutableStateOf(character.experience.toString()) }
+    var creationText by remember(character.id) { mutableStateOf(character.effectiveCreationExperience.toString()) }
+    var adjustmentText by remember(character.id) { mutableStateOf(character.xpAdjustment.toString()) }
+    var abilityOverrideText by remember(character.id) {
+        mutableStateOf(character.abilityPointsOverride?.toString().orEmpty())
+    }
+    val saveValues = {
+        val total = totalText.toIntOrNull()?.coerceAtLeast(0) ?: character.experience
+        val creation = creationText.toIntOrNull()?.coerceIn(0, total)
+            ?: character.effectiveCreationExperience.coerceAtMost(total)
+        val adjustment = adjustmentText.toIntOrNull() ?: character.xpAdjustment
+        onSetExperience(total)
+        onSetCreationExperience(creation)
+        onSetAdjustment(adjustment)
+        onSetAbilityOverride(abilityOverrideText.toIntOrNull()?.coerceAtLeast(0))
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 720.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 18.dp, end = 18.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Опыт и создание персонажа", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                if (character.creationComplete) "Создание завершено" else "Режим создания",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (character.creationComplete) MaterialTheme.colorScheme.onSurfaceVariant else DublGold,
+            )
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EconomyValue("Осталось XP", economy.remainingXp.toString(), Modifier.weight(1f), economy.remainingXp < 0)
+                EconomyValue("Потрачено XP", economy.spentXp.toString(), Modifier.weight(1f))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EconomyValue("ОС", "${economy.abilityPointsRemaining}/${economy.abilityPointsBudget}", Modifier.weight(1f), economy.abilityPointsRemaining < 0)
+                EconomyValue("Стартовый XP", economy.creationExperience.toString(), Modifier.weight(1f))
+            }
+
+            HorizontalDivider()
+            NumericField("Общий накопленный XP", totalText) { totalText = it }
+            NumericField("Стартовый XP", creationText) { creationText = it }
+            NumericField("Поправка расходов XP (+ расход / − возврат)", adjustmentText) { adjustmentText = it }
+            OutlinedTextField(
+                value = abilityOverrideText,
+                onValueChange = { abilityOverrideText = it.filter(Char::isDigit) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Лимит ОС вручную (пусто = по правилу)") },
+                supportingText = { Text("Рекомендация книги: ${economy.recommendedAbilityPoints} ОС по стартовому XP") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+            Button(
+                onClick = saveValues,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Сохранить расчёт") }
+
+            HorizontalDivider()
+            Text("Расход XP", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            EconomyLine("Характеристики", economy.attributeXp)
+            EconomyLine("Умения", economy.skillXp)
+            EconomyLine("Навыки", economy.developmentXp)
+            EconomyLine("Базовый запас маны", economy.manaXp)
+            EconomyLine("Заклинания", economy.spellXp)
+            EconomyLine("Ручная поправка", economy.adjustmentXp)
+            HorizontalDivider()
+            EconomyLine("Итого", economy.spentXp, bold = true)
+
+            if (economy.unpricedLearnedSpells > 0) {
+                Text(
+                    "${economy.unpricedLearnedSpells} изуч. заклин. выходят за таблицу 0–20 маны и не имеют ручной цены XP. Укажите стоимость в карточке заклинания.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DublDanger,
+                )
+            }
+            if (economy.attributeXp < 0) {
+                Text(
+                    "Отрицательные характеристики дают возврат XP буквально по таблице книги. Книга не уточняет, является ли этот возврат обязательным — при необходимости скорректируйте его ручной поправкой.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DublGold,
+                )
+            }
+            if (economy.overspentAbilityPoints) {
+                Text(
+                    "ОС превышают рекомендованный лимит на ${-economy.abilityPointsRemaining}. Это предупреждение, а не блокировка: правило книги сформулировано как рекомендация.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DublGold,
+                )
+            }
+            if (hasSelfTaught) {
+                Text(
+                    if (character.creationComplete) {
+                        "Самоучка: скидка на первые два ранга умений действует только после создания. История покупок в старых сейвах не хранится, поэтому скидка не применяется ретроактивно автоматически — используйте ручную поправку XP, если она положена."
+                    } else {
+                        "Самоучка не работает во время создания персонажа; его скидка начнёт иметь смысл только после завершения создания."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DublGold,
+                )
+            }
+
+            if (!character.creationComplete) {
+                Button(
+                    onClick = {
+                        saveValues()
+                        onCompleteCreation()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Завершить создание персонажа") }
+                Text(
+                    "После завершения стартовый XP фиксирует базу для ОС, а Базовый запас маны и другие требования «только при создании» больше нельзя будет повышать.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                OutlinedButton(
+                    onClick = onReopenCreation,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Вернуть режим создания") }
+                Text(
+                    "Используйте только для исправления старого/ошибочного листа: это снова разрешит creation-only покупки.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EconomyValue(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    danger: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (danger) DublDanger else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EconomyLine(label: String, value: Int, bold: Boolean = false) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)
+        Text(
+            value.toString(),
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (value < 0) DublGold else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
 @Composable
 private fun EditCharacterDialog(
     character: DublCharacter,
@@ -2804,7 +3049,7 @@ private fun EditCharacterDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Имя") }, singleLine = true)
                 OutlinedTextField(concept, { concept = it }, label = { Text("Концепт") })
-                NumericField("Опыт", experience) { experience = it }
+                NumericField("Общий опыт", experience) { experience = it }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NumericField("Размер 1–10", size, Modifier.weight(1f)) { size = it }
                     NumericField("Количество ног", legs, Modifier.weight(1f)) { legs = it }

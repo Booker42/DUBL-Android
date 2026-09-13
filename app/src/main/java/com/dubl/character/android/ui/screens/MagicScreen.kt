@@ -106,6 +106,7 @@ fun MagicScreen(controller: CharacterController) {
         item {
             MagicCoreCard(
                 manaRank = character.magic.manaRank,
+                creationComplete = character.creationComplete,
                 power = character.magic.power,
                 currentMana = character.manaCurrent,
                 maxMana = maxMana,
@@ -349,6 +350,7 @@ fun MagicScreen(controller: CharacterController) {
 @Composable
 private fun MagicCoreCard(
     manaRank: Int,
+    creationComplete: Boolean,
     power: Int,
     currentMana: Int,
     maxMana: Int,
@@ -371,6 +373,8 @@ private fun MagicCoreCard(
                     modifier = Modifier.fillMaxWidth(),
                     onMinus = { onManaRank((manaRank - 1).coerceAtLeast(0)) },
                     onPlus = { onManaRank((manaRank + 1).coerceAtMost(5)) },
+                    plusEnabled = !creationComplete && manaRank < 5,
+                    minusEnabled = !creationComplete && manaRank > 0,
                 )
                 MagicCounter(
                     title = "Сила магии",
@@ -391,6 +395,8 @@ private fun MagicCoreCard(
                     modifier = Modifier.weight(1f),
                     onMinus = { onManaRank((manaRank - 1).coerceAtLeast(0)) },
                     onPlus = { onManaRank((manaRank + 1).coerceAtMost(5)) },
+                    plusEnabled = !creationComplete && manaRank < 5,
+                    minusEnabled = !creationComplete && manaRank > 0,
                 )
                 MagicCounter(
                     title = "Сила магии",
@@ -401,7 +407,22 @@ private fun MagicCoreCard(
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
+        if (creationComplete) {
+            Text(
+                "Базовый запас маны можно повышать только при создании персонажа.",
+                style = MaterialTheme.typography.bodySmall,
+                color = DublMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+        } else {
+            Text(
+                "Базовый запас маны: 100 XP за ранг · только при создании.",
+                style = MaterialTheme.typography.bodySmall,
+                color = DublMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.height(4.dp))
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = DublMana.copy(alpha = 0.10f),
@@ -436,6 +457,8 @@ private fun MagicCounter(
     modifier: Modifier = Modifier,
     onMinus: () -> Unit,
     onPlus: () -> Unit,
+    minusEnabled: Boolean = true,
+    plusEnabled: Boolean = true,
 ) {
     Surface(
         modifier = modifier,
@@ -449,9 +472,9 @@ private fun MagicCounter(
         ) {
             Text(title, style = MaterialTheme.typography.labelMedium, color = DublMuted)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onMinus) { Text("−") }
+                TextButton(onClick = onMinus, enabled = minusEnabled) { Text("−") }
                 Text(value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onPlus) { Text("+") }
+                TextButton(onClick = onPlus, enabled = plusEnabled) { Text("+") }
             }
         }
     }
