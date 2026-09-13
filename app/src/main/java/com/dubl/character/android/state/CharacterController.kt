@@ -8,6 +8,7 @@ import com.dubl.character.android.model.AppSnapshot
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterSkill
 import com.dubl.character.android.model.DublCharacter
+import com.dubl.character.android.model.OwnedDevelopment
 import com.dubl.character.android.model.SkillCatalog
 import com.dubl.character.android.model.UntrainedRule
 import com.dubl.character.android.model.resolvedSkills
@@ -63,6 +64,19 @@ class CharacterController(private val repository: CharacterRepository) {
     }
 
     fun restoreAllSkills() = updateActive { it.copy(hiddenSkillIds = emptySet()) }
+
+    fun setDevelopmentRank(entryId: String, rank: Int, optionIndex: Int = 0) = updateActive { character ->
+        val next = character.development.toMutableMap()
+        if (rank <= 0) {
+            next.remove(entryId)
+        } else {
+            next[entryId] = OwnedDevelopment(
+                rank = rank,
+                optionIndex = optionIndex.coerceAtLeast(0),
+            )
+        }
+        character.copy(development = next)
+    }
 
     fun addSpecializedSkill(templateId: String, specialization: String): String? {
         val template = SkillCatalog.templates.firstOrNull { it.id == templateId } ?: return null

@@ -21,12 +21,14 @@ import com.dubl.character.android.data.CharacterRepository
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.screens.CharactersScreen
 import com.dubl.character.android.ui.screens.OverviewScreen
+import com.dubl.character.android.ui.screens.FeatsScreen
 import com.dubl.character.android.ui.screens.PlaceholderScreen
 import com.dubl.character.android.ui.screens.SkillsScreen
 
 private enum class AppSection(val label: String, val glyph: String) {
     OVERVIEW("Персонаж", "П"),
     SKILLS("Умения", "У"),
+    FEATS("Навыки", "Н"),
     MAGIC("Магия", "М"),
     INVENTORY("Инвентарь", "И"),
     MORE("Ещё", "•••"),
@@ -66,6 +68,7 @@ fun DublApp() {
             when (selected) {
                 AppSection.OVERVIEW -> OverviewScreen(controller)
                 AppSection.SKILLS -> SkillsScreen(controller)
+                AppSection.FEATS -> FeatsScreen(controller)
                 AppSection.MAGIC -> PlaceholderScreen(
                     "Магия",
                     "Следом перенесём силу магии, школы, уровни школ, заклинания и расход маны.",

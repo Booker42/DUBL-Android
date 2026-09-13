@@ -6,6 +6,7 @@ import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.AttributeValue
 import com.dubl.character.android.model.CharacterSkill
 import com.dubl.character.android.model.DublCharacter
+import com.dubl.character.android.model.OwnedDevelopment
 import com.dubl.character.android.model.UntrainedRule
 import com.dubl.character.android.model.defaultAttributes
 import org.json.JSONArray
@@ -36,7 +37,7 @@ class CharacterRepository(context: Context) {
     }
 
     private fun encodeSnapshot(snapshot: AppSnapshot): JSONObject = JSONObject().apply {
-        put("schema", 2)
+        put("schema", 3)
         put("activeCharacterId", snapshot.activeCharacterId)
         put("characters", JSONArray().apply {
             snapshot.characters.forEach { put(encodeCharacter(it)) }
@@ -68,6 +69,15 @@ class CharacterRepository(context: Context) {
         })
         put("hiddenSkillIds", JSONArray().apply {
             character.hiddenSkillIds.forEach { put(it) }
+        })
+        put("development", JSONArray().apply {
+            character.development.forEach { (id, owned) ->
+                put(JSONObject().apply {
+                    put("id", id)
+                    put("rank", owned.rank)
+                    put("option", owned.optionIndex)
+                })
+            }
         })
     }
 
@@ -125,6 +135,19 @@ class CharacterRepository(context: Context) {
             hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let(hidden::add)
         }
 
+        val development = linkedMapOf<String, OwnedDevelopment>()
+        val developmentArray = root.optJSONArray("development") ?: JSONArray()
+        for (index in 0 until developmentArray.length()) {
+            val item = developmentArray.optJSONObject(index) ?: continue
+            val id = item.optString("id").trim()
+            val rank = item.optInt("rank", 0)
+            if (id.isBlank() || rank <= 0) continue
+            development[id] = OwnedDevelopment(
+                rank = rank,
+                optionIndex = item.optInt("option", 0).coerceAtLeast(0),
+            )
+        }
+
         return DublCharacter(
             id = root.optString("id").ifBlank { UUID.randomUUID().toString() },
             name = root.optString("name", "Новый персонаж"),
@@ -140,6 +163,7 @@ class CharacterRepository(context: Context) {
             manaMaximum = root.optInt("manaMaximum", 0),
             skills = skills,
             hiddenSkillIds = hidden,
+            development = development,
         ).normalized()
     }
 

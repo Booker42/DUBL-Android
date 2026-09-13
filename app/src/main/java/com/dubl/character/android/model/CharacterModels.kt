@@ -33,6 +33,7 @@ data class DublCharacter(
     val manaMaximum: Int = 0,
     val skills: Map<String, CharacterSkill> = emptyMap(),
     val hiddenSkillIds: Set<String> = emptySet(),
+    val development: Map<String, OwnedDevelopment> = emptyMap(),
 ) {
     fun attributeRaw(id: AttributeId): Int = attributes[id]?.total ?: 0
 
@@ -130,6 +131,13 @@ data class DublCharacter(
             hiddenSkillIds = hiddenSkillIds.filterTo(linkedSetOf()) { id ->
                 SkillCatalog.builtIns.any { it.id == id } || normalizedSkills.containsKey(id)
             },
+            development = development.mapNotNull { (id, owned) ->
+                val rank = owned.rank.coerceAtLeast(0)
+                if (rank == 0 || id.isBlank()) null else id to owned.copy(
+                    rank = rank,
+                    optionIndex = owned.optionIndex.coerceAtLeast(0),
+                )
+            }.toMap(linkedMapOf()),
         )
         return clamped.copy(
             hpCurrent = clamped.hpCurrent.coerceIn(0, clamped.healthMaximum),
