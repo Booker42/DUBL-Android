@@ -56,23 +56,133 @@ object SheetGroupingRules {
         return result
     }
 
+    fun moveItems(
+        groups: List<SheetGroup>,
+        itemIds: List<String>,
+        targetGroupId: String,
+        targetIndex: Int,
+    ): List<SheetGroup> {
+        if (groups.none { it.id == targetGroupId }) return groups
+        val existing = groups.flatMap { it.itemIds }.toSet()
+        val moving = itemIds.distinct().filter { it in existing }
+        if (moving.isEmpty()) return groups
+        val movingSet = moving.toSet()
+        val without = groups.map { group ->
+            group.copy(itemIds = group.itemIds.filterNot { it in movingSet })
+        }.toMutableList()
+        val groupIndex = without.indexOfFirst { it.id == targetGroupId }
+        val target = without[groupIndex]
+        val insertion = targetIndex.coerceIn(0, target.itemIds.size)
+        val items = target.itemIds.toMutableList().apply { addAll(insertion, moving) }
+        without[groupIndex] = target.copy(itemIds = items)
+        return without
+    }
+
+    fun subtreeBlock(
+        rootId: String,
+        parentById: Map<String, String?>,
+        itemOrder: List<String>,
+    ): List<String> {
+        fun belongsToRoot(itemId: String): Boolean {
+            var current: String? = itemId
+            val visited = mutableSetOf<String>()
+            while (current != null && visited.add(current)) {
+                if (current == rootId) return true
+                current = parentById[current]
+            }
+            return false
+        }
+        return itemOrder.distinct().filter(::belongsToRoot)
+    }
+
+    fun hierarchicalOrder(
+        itemIds: List<String>,
+        parentById: Map<String, String?>,
+    ): List<String> {
+        val distinct = itemIds.distinct()
+        val present = distinct.toSet()
+        val children = distinct.groupBy { id -> parentById[id]?.takeIf { it in present } }
+        val result = mutableListOf<String>()
+        val visited = mutableSetOf<String>()
+
+        fun append(id: String) {
+            if (!visited.add(id)) return
+            result += id
+            children[id].orEmpty().forEach(::append)
+        }
+
+        children[null].orEmpty().forEach(::append)
+        distinct.filterNot { it in visited }.forEach(::append)
+        return result
+    }
+
+    fun hierarchyBlocks(
+        itemIds: List<String>,
+        parentById: Map<String, String?>,
+    ): List<List<String>> {
+        val ordered = hierarchicalOrder(itemIds, parentById)
+        val present = ordered.toSet()
+        val roots = ordered.filter { id -> parentById[id]?.takeIf { it in present } == null }
+        return roots.map { root -> subtreeBlock(root, parentById, ordered) }
+    }
+
+    fun localDepth(
+        itemId: String,
+        groupItemIds: Collection<String>,
+        parentById: Map<String, String?>,
+    ): Int {
+        val present = groupItemIds.toSet()
+        var depth = 0
+        var current = parentById[itemId]
+        val visited = mutableSetOf(itemId)
+        while (current != null && current in present && visited.add(current)) {
+            depth += 1
+            current = parentById[current]
+        }
+        return depth
+    }
+
+    fun moveGroupToIndex(groups: List<SheetGroup>, id: String, targetIndex: Int): List<SheetGroup> {
+        val index = groups.indexOfFirst { it.id == id }
+        if (index < 0) return groups
+        val result = groups.toMutableList()
+        val moving = result.removeAt(index)
+        result.add(targetIndex.coerceIn(0, result.size), moving)
+        return result
+    }
+
+    fun <T> balancedColumns(
+        items: List<T>,
+        weight: (T) -> Int = { 1 },
+    ): Pair<List<T>, List<T>> {
+        val left = mutableListOf<T>()
+        val right = mutableListOf<T>()
+        var leftWeight = 0
+        var rightWeight = 0
+        items.forEach { item ->
+            val itemWeight = weight(item).coerceAtLeast(1)
+            val toLeft = when {
+                leftWeight < rightWeight -> true
+                rightWeight < leftWeight -> false
+                else -> left.size <= right.size
+            }
+            if (toLeft) {
+                left += item
+                leftWeight += itemWeight
+            } else {
+                right += item
+                rightWeight += itemWeight
+            }
+        }
+        return left to right
+    }
+
     fun moveItem(
         groups: List<SheetGroup>,
         itemId: String,
         targetGroupId: String,
         targetIndex: Int,
-    ): List<SheetGroup> {
-        if (groups.none { itemId in it.itemIds }) return groups
-        if (groups.none { it.id == targetGroupId }) return groups
-
-        val without = groups.map { group -> group.copy(itemIds = group.itemIds.filterNot { it == itemId }) }.toMutableList()
-        val groupIndex = without.indexOfFirst { it.id == targetGroupId }
-        val target = without[groupIndex]
-        val insertion = targetIndex.coerceIn(0, target.itemIds.size)
-        val items = target.itemIds.toMutableList().apply { add(insertion, itemId) }
-        without[groupIndex] = target.copy(itemIds = items)
-        return without
-    }
+    ): List<SheetGroup> = moveItems(groups, listOf(itemId), targetGroupId, targetIndex)
 
     /** Move one visual slot. Crossing a group edge moves into the adjacent group. */
     fun moveItemByStep(groups: List<SheetGroup>, itemId: String, direction: Int): List<SheetGroup> {

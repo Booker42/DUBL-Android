@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2 — Hierarchical groups, drag ordering, and explicit skill rolls
+
+- Restored dependency-tree presentation for owned special developments and martial arts inside user-defined character-sheet groups.
+- Dragging a tree root now moves its complete owned subtree; individual children can still be extracted, reordered, and reattached independently.
+- Added exact drag-and-drop ordering for both items and groups and removed the legacy “group above/below” controls.
+- Replaced paired two-column rows with independently balanced columns so taller two-line cards no longer leave artificial gaps in the opposite column; linked trees stay in one column.
+- Changed character-sheet skill rolls to always open an attribute chooser first, defaulting to the rulebook/stock attribute and recalculating the displayed bonus for any selected attribute.
+- Removed eager Martial Arts availability calculation on tab entry; availability is evaluated lazily for visible rows, with full evaluation only for the explicit “available now” filter.
+- Returned bottom-sheet gesture ownership to Material3 and disabled partial expansion for key sheets to reduce jerking and make swipe-to-dismiss consistent.
+- Added regression coverage for tree moves, sibling ordering, group ordering, roll-attribute overrides, masonry-style columns, and sheet interaction policy.
+- Bumped the default Android version to `0.6.2`.
+
 ## 0.6.1 — Character-sheet performance and mobile interaction polish
 
 - Reworked learned skills and acquired developments on the Character sheet into true lazy list items so long sheets no longer compose every card inside one parent item while scrolling.

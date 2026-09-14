@@ -26,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -186,22 +187,13 @@ fun FeatsScreen(controller: CharacterController) {
             )
             .toList()
     }
-    val martialAvailabilityById = remember(tab, filteredEntries, rules) {
-        if (tab == DevelopmentTab.MARTIAL_ARTS) {
-            filteredEntries.associate { entry -> entry.id to rules.availability(entry) }
-        } else {
-            emptyMap()
-        }
-    }
-
     val filteredChiTechniques = remember(query, availableOnly, character, chiCatalog, catalog) {
         val needle = developmentNormalize(query)
         chiCatalog.techniques.filter { technique ->
             val matches = needle.isBlank() || developmentNormalize(
                 listOf(technique.name, technique.school, technique.action, technique.effect, technique.requirements).joinToString(" ")
             ).contains(needle)
-            val availability = chiRules.availability(technique)
-            matches && (!availableOnly || availability.unlocked)
+            matches && (!availableOnly || chiRules.availability(technique).unlocked)
         }.sortedWith(compareBy<ChiTechnique>({ developmentNormalize(it.school) }, { developmentNormalize(it.name) }))
     }
 
@@ -451,7 +443,6 @@ fun FeatsScreen(controller: CharacterController) {
                                 entry = entry,
                                 rules = rules,
                                 progress = progress,
-                                availabilityOverride = martialAvailabilityById[entry.id],
                                 onClick = { selectedEntryId = entry.id },
                             )
                         }
@@ -1063,12 +1054,9 @@ private fun DevelopmentRow(
     entry: DevelopmentEntry,
     rules: DevelopmentRules,
     progress: DevelopmentProgress,
-    availabilityOverride: com.dubl.character.android.model.DevelopmentAvailability? = null,
     onClick: () -> Unit,
 ) {
-    val availability = remember(entry.id, rules, availabilityOverride) {
-        availabilityOverride ?: rules.availability(entry)
-    }
+    val availability = remember(entry.id, rules) { rules.availability(entry) }
     val rank = progress.rank(entry.id)
     val owned = rank > 0
     val invalidOwned = owned && availability.checks.any { it.status != RequirementStatus.OK }
@@ -1211,9 +1199,11 @@ private fun DevelopmentDetailSheet(
     val availability = rules.availability(entry, optionIndex)
     val children = catalog.childrenOf(entry.id)
     val ownedInvalid = currentRank > 0 && availability.checks.any { it.status != RequirementStatus.OK }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(

@@ -11,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +48,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -60,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -125,10 +128,9 @@ import com.dubl.character.android.model.rollFollowUp
 import com.dubl.character.android.model.resolveSkill
 import com.dubl.character.android.model.resolvedSkills
 import com.dubl.character.android.model.skillCalculation
-import com.dubl.character.android.model.skillCalculationOptions
+import com.dubl.character.android.model.skillCalculationForRoll
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.containSheetOverscroll
-import com.dubl.character.android.ui.components.compactGridRows
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublAccent
@@ -142,6 +144,7 @@ import java.text.DecimalFormat
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class CharacterResource(val persisted: CharacterSheetResourceId) {
@@ -216,7 +219,8 @@ fun OverviewScreen(controller: CharacterController) {
     var selectedCondition by remember { mutableStateOf<CharacterConditionId?>(null) }
     var showSkillGroupManager by remember { mutableStateOf(false) }
     var showDevelopmentGroupManager by remember { mutableStateOf(false) }
-    var selectedSkillId by remember { mutableStateOf<String?>(null) }
+    var selectedSkillId by remember(character.id) { mutableStateOf<String?>(null) }
+    var selectedSkillRoll by remember(character.id) { mutableStateOf<Pair<String, AttributeId>?>(null) }
     var selectedDevelopmentId by remember(character.id) { mutableStateOf<String?>(null) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
     var selectedCustomResourceId by remember(character.id) { mutableStateOf<String?>(null) }
@@ -318,6 +322,19 @@ fun OverviewScreen(controller: CharacterController) {
         }
     }
     val overviewDevelopmentById = remember(overviewDevelopmentItems) { overviewDevelopmentItems.associateBy { it.entry.id } }
+    val developmentParentById = remember(overviewDevelopmentItems) {
+        overviewDevelopmentItems.associate { it.entry.id to it.parentId }
+    }
+    val developmentTreeRootIds = remember(overviewDevelopmentItems, developmentParentById) {
+        val parentIds = developmentParentById.values.filterNotNull().toSet()
+        overviewDevelopmentItems.asSequence()
+            .filter { item ->
+                item.entry.id in parentIds && item.parentId == null &&
+                    (item.entry.isSpecialDevelopment || item.entry.isMartialArt)
+            }
+            .map { it.entry.id }
+            .toSet()
+    }
     val invalidOverviewDevelopmentIds = remember(overviewDevelopmentItems, overviewDevelopmentRules) {
         overviewDevelopmentItems.asSequence()
             .filter { item -> overviewDevelopmentRules.requirements(item.entry).any { it.status != RequirementStatus.OK } }
@@ -420,7 +437,6 @@ fun OverviewScreen(controller: CharacterController) {
                 skills = trainedSkills,
                 groups = normalizedSkillGroups,
                 byId = trainedSkillsById,
-                preferredAttributes = sheetExtras.preferredSkillAttributes,
                 onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
                 onConfigure = { showSkillGroupManager = true },
                 onSkillClick = { selectedSkillId = it.id },
@@ -430,6 +446,7 @@ fun OverviewScreen(controller: CharacterController) {
                 items = overviewDevelopmentItems,
                 groups = normalizedDevelopmentGroups,
                 byId = overviewDevelopmentById,
+                parentById = developmentParentById,
                 invalidIds = invalidOverviewDevelopmentIds,
                 onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
                 onConfigure = { showDevelopmentGroupManager = true },
@@ -575,6 +592,8 @@ fun OverviewScreen(controller: CharacterController) {
             title = "Группы умений",
             groups = normalized,
             itemLabels = trainedSkills.associate { it.id to it.name },
+            itemParentIds = emptyMap(),
+            treeRootIds = emptySet(),
             ungroupedId = SKILL_UNGROUPED_ID,
             onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
             onDismiss = { showSkillGroupManager = false },
@@ -594,6 +613,8 @@ fun OverviewScreen(controller: CharacterController) {
             title = "Группы навыков",
             groups = normalized,
             itemLabels = owned.associate { it.entry.id to it.entry.name },
+            itemParentIds = developmentParentById,
+            treeRootIds = developmentTreeRootIds,
             ungroupedId = DEVELOPMENT_UNGROUPED_ID,
             onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
             onDismiss = { showDevelopmentGroupManager = false },
@@ -602,20 +623,27 @@ fun OverviewScreen(controller: CharacterController) {
 
     selectedSkillId?.let { skillId ->
         character.resolveSkill(skillId)?.let { skill ->
-            DublSkillRollSheet(
+            SkillAttributeChoiceSheet(
                 character = character,
                 skill = skill,
-                preferredAttribute = sheetExtras.preferredSkillAttributes[skill.id],
-                onPreferredAttribute = { attribute ->
-                    val updated = sheetExtras.copy(
-                        preferredSkillAttributes = sheetExtras.preferredSkillAttributes + (skill.id to attribute),
-                    )
-                    sheetExtras = updated
-                    extrasRepository.save(character.id, updated)
+                onConfirm = { attribute ->
+                    selectedSkillId = null
+                    selectedSkillRoll = skill.id to attribute
                 },
                 onDismiss = { selectedSkillId = null },
             )
         } ?: run { selectedSkillId = null }
+    }
+
+    selectedSkillRoll?.let { (skillId, attribute) ->
+        character.resolveSkill(skillId)?.let { skill ->
+            DublSkillRollSheet(
+                character = character,
+                skill = skill,
+                initialAttribute = attribute,
+                onDismiss = { selectedSkillRoll = null },
+            )
+        } ?: run { selectedSkillRoll = null }
     }
 
     selectedDevelopmentId?.let { entryId ->
@@ -1816,7 +1844,6 @@ private fun LazyListScope.ownedSkillSectionItems(
     skills: List<ResolvedSkill>,
     groups: List<SheetGroup>,
     byId: Map<String, ResolvedSkill>,
-    preferredAttributes: Map<String, AttributeId>,
     onGroupsChanged: (List<SheetGroup>) -> Unit,
     onConfigure: () -> Unit,
     onSkillClick: (ResolvedSkill) -> Unit,
@@ -1850,35 +1877,47 @@ private fun LazyListScope.ownedSkillSectionItems(
                 onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
             )
         }
-        if (!group.collapsed) {
-            items(
-                items = compactGridRows(groupSkills, columns = 2),
-                key = { row -> "skill-row:${group.id}:${row.joinToString("|") { it.id }}" },
-            ) { rowSkills ->
+        if (!group.collapsed && groupSkills.isNotEmpty()) {
+            item(key = "skill-grid:${group.id}") {
+                val (left, right) = SheetGroupingRules.balancedColumns(groupSkills) { compactTileWeight(it.name) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    rowSkills.forEach { skill ->
-                        CompactSkillTile(
-                            character = character,
-                            skill = skill,
-                            preferredAttribute = preferredAttributes[skill.id],
-                            modifier = Modifier.weight(1f),
-                            onClick = { onSkillClick(skill) },
-                            onDragStep = { direction ->
-                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, skill.id, direction))
-                            },
-                        )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        left.forEach { skill ->
+                            CompactSkillTile(
+                                character = character,
+                                skill = skill,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onSkillClick(skill) },
+                            )
+                        }
                     }
-                    if (rowSkills.size == 1) Spacer(Modifier.weight(1f))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        right.forEach { skill ->
+                            CompactSkillTile(
+                                character = character,
+                                skill = skill,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onSkillClick(skill) },
+                            )
+                        }
+                    }
                 }
             }
         }
     }
     item(key = "owned-skills-help") {
         Text(
-            "Тап — бросок · группы и порядок меняются через «Группы»",
+            "Тап — выбрать характеристику и бросить · группы и порядок меняются через «Группы»",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1889,6 +1928,7 @@ private fun LazyListScope.ownedDevelopmentSectionItems(
     items: List<DevelopmentSheetItem>,
     groups: List<SheetGroup>,
     byId: Map<String, DevelopmentSheetItem>,
+    parentById: Map<String, String?>,
     invalidIds: Set<String>,
     onGroupsChanged: (List<SheetGroup>) -> Unit,
     onConfigure: () -> Unit,
@@ -1899,7 +1939,8 @@ private fun LazyListScope.ownedDevelopmentSectionItems(
         SectionTitle("Взятые навыки", trailing = "Группы · ${items.size}", onTrailingClick = onConfigure)
     }
     groups.forEach { group ->
-        val groupItems = group.itemIds.mapNotNull(byId::get)
+        val orderedIds = SheetGroupingRules.hierarchicalOrder(group.itemIds, parentById)
+        val groupItems = orderedIds.mapNotNull(byId::get)
         item(key = "development-group:${group.id}") {
             SheetGroupHeader(
                 title = group.title,
@@ -1909,38 +1950,67 @@ private fun LazyListScope.ownedDevelopmentSectionItems(
                 onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
             )
         }
-        if (!group.collapsed) {
-            items(
-                items = compactGridRows(groupItems, columns = 2),
-                key = { row -> "development-row:${group.id}:${row.joinToString("|") { it.entry.id }}" },
-            ) { rowItems ->
+        if (!group.collapsed && groupItems.isNotEmpty()) {
+            item(key = "development-grid:${group.id}") {
+                val groupIds = groupItems.map { it.entry.id }
+                val blocks = SheetGroupingRules.hierarchyBlocks(groupIds, parentById)
+                    .map { blockIds -> blockIds.mapNotNull(byId::get) }
+                val (leftBlocks, rightBlocks) = SheetGroupingRules.balancedColumns(blocks) { block ->
+                    block.sumOf { item ->
+                        compactTileWeight(item.entry.name) +
+                            SheetGroupingRules.localDepth(item.entry.id, groupIds, parentById).coerceAtMost(1)
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    rowItems.forEach { item ->
-                        CompactDevelopmentTile(
-                            item = item,
-                            invalid = item.entry.id in invalidIds,
-                            modifier = Modifier.weight(1f),
-                            onClick = { onEntryClick(item.entry) },
-                            onDragStep = { direction ->
-                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, item.entry.id, direction))
-                            },
-                        )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        leftBlocks.flatten().forEach { item ->
+                            CompactDevelopmentTile(
+                                item = item,
+                                displayDepth = SheetGroupingRules.localDepth(item.entry.id, groupIds, parentById),
+                                invalid = item.entry.id in invalidIds,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onEntryClick(item.entry) },
+                            )
+                        }
                     }
-                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        rightBlocks.flatten().forEach { item ->
+                            CompactDevelopmentTile(
+                                item = item,
+                                displayDepth = SheetGroupingRules.localDepth(item.entry.id, groupIds, parentById),
+                                invalid = item.entry.id in invalidIds,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onEntryClick(item.entry) },
+                            )
+                        }
+                    }
                 }
             }
         }
     }
     item(key = "owned-development-help") {
         Text(
-            "Тап — подробности · группы и порядок меняются через «Группы»",
+            "↳ показывает связь внутри дерева · порядок и группы меняются через «Группы»",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+private fun compactTileWeight(label: String): Int = when {
+    label.length >= 34 -> 3
+    label.length >= 20 -> 2
+    else -> 1
 }
 
 @Composable
@@ -1992,36 +2062,16 @@ private fun SheetGroupHeader(
 private fun CompactSkillTile(
     character: DublCharacter,
     skill: ResolvedSkill,
-    preferredAttribute: AttributeId?,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    onDragStep: (Int) -> Unit,
 ) {
-    val selected = preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.firstOrNull()
-    val calculation = selected?.let { character.skillCalculation(skill, it) }
-    val bonus = calculation?.total?.let(::signed) ?: "—"
+    val selected = skill.stockAttribute
+    val calculation = character.skillCalculationForRoll(skill, selected)
+    val bonus = calculation.total?.let(::signed) ?: "—"
     val accent = skillAccent(skill)
-    val threshold = with(LocalDensity.current) { 46.dp.toPx() }
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
-            .pointerInput(skill.id, threshold) {
-                var accumulated = 0f
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { accumulated = 0f },
-                    onDragEnd = { accumulated = 0f },
-                    onDragCancel = { accumulated = 0f },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        accumulated += dragAmount.y
-                        while (kotlin.math.abs(accumulated) >= threshold) {
-                            val direction = if (accumulated > 0f) 1 else -1
-                            onDragStep(direction)
-                            accumulated -= threshold * direction
-                        }
-                    },
-                )
-            }
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
         color = accent.copy(alpha = 0.045f),
@@ -2047,7 +2097,7 @@ private fun CompactSkillTile(
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                "Ранг ${skill.rank}",
+                "${selected.shortTitle} · ранг ${skill.rank}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2068,42 +2118,38 @@ private fun skillAccent(skill: ResolvedSkill): Color = when (skill.category) {
 @Composable
 private fun CompactDevelopmentTile(
     item: DevelopmentSheetItem,
+    displayDepth: Int,
     invalid: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    onDragStep: (Int) -> Unit,
 ) {
     val accent = if (invalid) DublDanger else developmentAccent(item.entry)
-    val threshold = with(LocalDensity.current) { 42.dp.toPx() }
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(9.dp))
-            .pointerInput(item.entry.id, threshold) {
-                var accumulated = 0f
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { accumulated = 0f },
-                    onDragEnd = { accumulated = 0f },
-                    onDragCancel = { accumulated = 0f },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        accumulated += dragAmount.y
-                        while (kotlin.math.abs(accumulated) >= threshold) {
-                            val direction = if (accumulated > 0f) 1 else -1
-                            onDragStep(direction)
-                            accumulated -= threshold * direction
-                        }
-                    },
-                )
-            }
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(9.dp),
         color = accent.copy(alpha = 0.04f),
         border = BorderStroke(1.dp, accent.copy(alpha = if (invalid) 0.62f else 0.30f)),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(
+                start = 10.dp + (displayDepth.coerceAtMost(2) * 6).dp,
+                end = 10.dp,
+                top = 7.dp,
+                bottom = 7.dp,
+            ),
+            verticalAlignment = Alignment.Top,
         ) {
+            if (displayDepth > 0) {
+                Text(
+                    "↳",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accent.copy(alpha = 0.82f),
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(5.dp))
+            }
             Text(
                 item.entry.name,
                 modifier = Modifier.weight(1f),
@@ -2112,7 +2158,7 @@ private fun CompactDevelopmentTile(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(7.dp))
             Text(
                 "${item.rank}",
                 style = MaterialTheme.typography.labelLarge,
@@ -2142,8 +2188,10 @@ private fun OwnedDevelopmentDetailSheet(
     val rules = DevelopmentRules(character, catalog, progress)
     val rank = progress.rank(entry.id)
     val checks = rules.requirements(entry)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2442,27 +2490,95 @@ private fun GroupManagerSheet(
     title: String,
     groups: List<SheetGroup>,
     itemLabels: Map<String, String>,
+    itemParentIds: Map<String, String?>,
+    treeRootIds: Set<String>,
     ungroupedId: String,
     onGroupsChanged: (List<SheetGroup>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var newGroupName by remember(title) { mutableStateOf("") }
     var editingId by remember(title) { mutableStateOf<String?>(null) }
     var editingName by remember(title) { mutableStateOf("") }
     val groupBounds = remember(title) { mutableMapOf<String, Rect>() }
+    val itemBounds = remember(title) { mutableMapOf<String, Rect>() }
     var hoveredGroupId by remember(title) { mutableStateOf<String?>(null) }
+    val groupListState = rememberLazyListState()
+    val dragScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var groupListBounds by remember(title) { mutableStateOf(Rect.Zero) }
 
-    fun groupAt(windowY: Float): String? {
-        val direct = groupBounds.entries.firstOrNull { (_, bounds) -> windowY >= bounds.top && windowY <= bounds.bottom }
+    fun autoScrollGroups(windowY: Float) {
+        if (groupListBounds == Rect.Zero) return
+        val edge = 54.dp
+        val edgePx = with(density) { edge.toPx() }
+        val delta = when {
+            windowY < groupListBounds.top + edgePx -> -30f
+            windowY > groupListBounds.bottom - edgePx -> 30f
+            else -> 0f
+        }
+        if (delta != 0f) dragScope.launch { groupListState.scrollBy(delta) }
+    }
+
+    val visualGroups = groups.map { group ->
+        group.copy(itemIds = SheetGroupingRules.hierarchicalOrder(group.itemIds, itemParentIds))
+    }
+    val allVisualIds = visualGroups.flatMap { it.itemIds }
+
+    fun groupAt(windowY: Float, excludingId: String? = null): String? {
+        val candidates = groupBounds.entries.filter { it.key != excludingId }
+        val direct = candidates.firstOrNull { (_, bounds) -> windowY >= bounds.top && windowY <= bounds.bottom }
         if (direct != null) return direct.key
-        return groupBounds.entries.minByOrNull { (_, bounds) ->
+        return candidates.minByOrNull { (_, bounds) ->
             kotlin.math.abs(windowY - ((bounds.top + bounds.bottom) / 2f))
         }?.key
     }
 
+    fun moveBlockAt(block: List<String>, windowY: Float) {
+        val moving = block.toSet()
+        val targetGroupId = groupAt(windowY) ?: return
+        val targetGroup = visualGroups.firstOrNull { it.id == targetGroupId } ?: return
+        val remainingTarget = targetGroup.itemIds.filterNot { it in moving }
+        val candidateIds = remainingTarget.filter { itemBounds.containsKey(it) }
+        val targetItemId = candidateIds.minByOrNull { itemId ->
+            val bounds = itemBounds[itemId] ?: return@minByOrNull Float.MAX_VALUE
+            kotlin.math.abs(windowY - ((bounds.top + bounds.bottom) / 2f))
+        }
+        val targetIndex = if (targetItemId == null) {
+            remainingTarget.size
+        } else {
+            val bounds = itemBounds[targetItemId]
+            val base = remainingTarget.indexOf(targetItemId).coerceAtLeast(0)
+            if (bounds != null && windowY > (bounds.top + bounds.bottom) / 2f) base + 1 else base
+        }
+        val moved = SheetGroupingRules.moveItems(
+            groups = visualGroups,
+            itemIds = block,
+            targetGroupId = targetGroupId,
+            targetIndex = targetIndex,
+        ).map { group ->
+            group.copy(itemIds = SheetGroupingRules.hierarchicalOrder(group.itemIds, itemParentIds))
+        }
+        onGroupsChanged(moved)
+    }
+
+    fun moveGroupAt(groupId: String, windowY: Float) {
+        val targetGroupId = groupAt(windowY, excludingId = groupId) ?: return
+        val remaining = visualGroups.filterNot { it.id == groupId }
+        val targetIndex = remaining.indexOfFirst { it.id == targetGroupId }.takeIf { it >= 0 } ?: return
+        val targetBounds = groupBounds[targetGroupId]
+        val insertion = if (targetBounds != null && windowY > (targetBounds.top + targetBounds.bottom) / 2f) {
+            targetIndex + 1
+        } else {
+            targetIndex
+        }
+        onGroupsChanged(SheetGroupingRules.moveGroupToIndex(visualGroups, groupId, insertion))
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -2481,13 +2597,13 @@ private fun GroupManagerSheet(
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                     Text(
-                        "Как перемещать",
+                        "Drag & drop",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = DublAccent,
                     )
                     Text(
-                        "Зажмите карточку за область «≡ Зажать и тянуть» и ведите к нужной группе. Целевая группа подсветится; отпустите карточку, чтобы перенести её.",
+                        "Зажмите ≡ у группы или карточки и тяните. Корень спец. ветки / боевого искусства переносит всё дерево; ребёнок переносится отдельно. В одной группе связь родитель → дети восстанавливается автоматически.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2495,18 +2611,26 @@ private fun GroupManagerSheet(
             }
 
             LazyColumn(
-                modifier = Modifier.heightIn(max = 500.dp),
+                modifier = Modifier
+                    .heightIn(max = 520.dp)
+                    .onGloballyPositioned { groupListBounds = it.boundsInWindow() },
+                state = groupListState,
                 verticalArrangement = Arrangement.spacedBy(9.dp),
                 contentPadding = PaddingValues(bottom = 4.dp),
             ) {
-                items(groups, key = { it.id }) { group ->
+                items(visualGroups, key = { it.id }) { group ->
                     DisposableEffect(group.id) {
                         onDispose { groupBounds.remove(group.id) }
                     }
+                    var groupDragOffsetY by remember(group.id) { mutableStateOf(0f) }
+                    var groupDragging by remember(group.id) { mutableStateOf(false) }
+                    var groupPointerWindowY by remember(group.id) { mutableStateOf(0f) }
                     val isDropTarget = hoveredGroupId == group.id
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .zIndex(if (groupDragging) 8f else 0f)
+                            .graphicsLayer { translationY = groupDragOffsetY }
                             .onGloballyPositioned { coordinates ->
                                 groupBounds[group.id] = coordinates.boundsInWindow()
                             },
@@ -2526,15 +2650,66 @@ private fun GroupManagerSheet(
                                 Surface(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id))
+                                        .pointerInput(group.id) {
+                                            var accumulated = 0f
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = { localOffset ->
+                                                    accumulated = 0f
+                                                    groupDragOffsetY = 0f
+                                                    groupDragging = true
+                                                    val bounds = groupBounds[group.id]
+                                                    groupPointerWindowY = (bounds?.top ?: 0f) + localOffset.y
+                                                    autoScrollGroups(groupPointerWindowY)
+                                                    hoveredGroupId = groupAt(groupPointerWindowY, excludingId = group.id)
+                                                },
+                                                onDragCancel = {
+                                                    accumulated = 0f
+                                                    groupDragOffsetY = 0f
+                                                    groupDragging = false
+                                                    hoveredGroupId = null
+                                                },
+                                                onDragEnd = {
+                                                    groupDragOffsetY = 0f
+                                                    groupDragging = false
+                                                    moveGroupAt(group.id, groupPointerWindowY)
+                                                    hoveredGroupId = null
+                                                    accumulated = 0f
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    accumulated += dragAmount.y
+                                                    groupDragOffsetY = accumulated
+                                                    groupPointerWindowY += dragAmount.y
+                                                    autoScrollGroups(groupPointerWindowY)
+                                                    hoveredGroupId = groupAt(groupPointerWindowY, excludingId = group.id)
+                                                },
+                                            )
                                         },
                                     shape = RoundedCornerShape(8.dp),
-                                    color = DublAccent.copy(alpha = 0.08f),
+                                    color = DublAccent.copy(alpha = 0.10f),
+                                    border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.32f)),
+                                ) {
+                                    Text(
+                                        "≡",
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = DublAccent,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            onGroupsChanged(SheetGroupingRules.toggleCollapsed(visualGroups, group.id))
+                                        },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = DublAccent.copy(alpha = 0.06f),
                                 ) {
                                     Text(
                                         if (group.collapsed) "▸" else "▾",
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                                         fontWeight = FontWeight.Bold,
                                         color = DublAccent,
                                     )
@@ -2549,7 +2724,7 @@ private fun GroupManagerSheet(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        "${group.itemIds.size} элементов",
+                                        "${group.itemIds.size} элементов · за ≡ двигается вся группа",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -2570,27 +2745,12 @@ private fun GroupManagerSheet(
                                 if (group.id != ungroupedId) {
                                     OutlinedButton(
                                         onClick = {
-                                            onGroupsChanged(SheetGroupingRules.deleteGroup(groups, group.id, ungroupedId))
+                                            onGroupsChanged(SheetGroupingRules.deleteGroup(visualGroups, group.id, ungroupedId))
                                             if (editingId == group.id) editingId = null
                                         },
                                         modifier = Modifier.weight(1f),
                                     ) { Text("Удалить", color = DublDanger, maxLines = 1) }
                                 }
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                            ) {
-                                OutlinedButton(
-                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, -1)) },
-                                    enabled = groups.indexOf(group) > 0,
-                                    modifier = Modifier.weight(1f),
-                                ) { Text("↑ Группа выше", maxLines = 1) }
-                                OutlinedButton(
-                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, 1)) },
-                                    enabled = groups.indexOf(group) < groups.lastIndex,
-                                    modifier = Modifier.weight(1f),
-                                ) { Text("↓ Группа ниже", maxLines = 1) }
                             }
 
                             if (editingId == group.id) {
@@ -2610,7 +2770,7 @@ private fun GroupManagerSheet(
                                     TextButton(onClick = { editingId = null }) { Text("Отмена") }
                                     TextButton(
                                         onClick = {
-                                            onGroupsChanged(SheetGroupingRules.renameGroup(groups, group.id, editingName))
+                                            onGroupsChanged(SheetGroupingRules.renameGroup(visualGroups, group.id, editingName))
                                             editingId = null
                                             focusManager.clearFocus()
                                         },
@@ -2621,33 +2781,37 @@ private fun GroupManagerSheet(
                             if (!group.collapsed) {
                                 if (group.itemIds.isEmpty()) {
                                     Text(
-                                        "Пустая группа — перетащите сюда карточку из соседней группы.",
+                                        "Пустая группа — перетащите сюда карточку.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 } else {
+                                    val groupIds = group.itemIds
                                     group.itemIds.forEach { itemId ->
+                                        DisposableEffect(itemId) {
+                                            onDispose { itemBounds.remove(itemId) }
+                                        }
+                                        val depth = SheetGroupingRules.localDepth(itemId, groupIds, itemParentIds)
+                                        val block = if (itemId in treeRootIds) {
+                                            SheetGroupingRules.subtreeBlock(itemId, itemParentIds, allVisualIds)
+                                        } else {
+                                            listOf(itemId)
+                                        }
                                         GroupManagerItemCard(
                                             itemId = itemId,
                                             label = itemLabels[itemId] ?: itemId,
-                                            onDragWindowY = { windowY -> hoveredGroupId = groupAt(windowY) },
+                                            depth = depth,
+                                            treeSize = block.size,
+                                            movesTree = itemId in treeRootIds && block.size > 1,
+                                            onBounds = { bounds -> itemBounds[itemId] = bounds },
+                                            onDragWindowY = { windowY ->
+                                                autoScrollGroups(windowY)
+                                                hoveredGroupId = groupAt(windowY)
+                                            },
                                             onDragCancel = { hoveredGroupId = null },
                                             onDropWindowY = { windowY ->
-                                                val targetGroupId = groupAt(windowY)
                                                 hoveredGroupId = null
-                                                if (targetGroupId != null && targetGroupId != group.id) {
-                                                    val target = groups.firstOrNull { it.id == targetGroupId }
-                                                    if (target != null) {
-                                                        onGroupsChanged(
-                                                            SheetGroupingRules.moveItem(
-                                                                groups = groups,
-                                                                itemId = itemId,
-                                                                targetGroupId = targetGroupId,
-                                                                targetIndex = target.itemIds.size,
-                                                            ),
-                                                        )
-                                                    }
-                                                }
+                                                moveBlockAt(block, windowY)
                                             },
                                         )
                                     }
@@ -2682,7 +2846,7 @@ private fun GroupManagerSheet(
                 Button(
                     onClick = {
                         val id = "user:${System.nanoTime()}"
-                        onGroupsChanged(SheetGroupingRules.addGroup(groups, id, newGroupName))
+                        onGroupsChanged(SheetGroupingRules.addGroup(visualGroups, id, newGroupName))
                         newGroupName = ""
                         focusManager.clearFocus()
                     },
@@ -2698,6 +2862,10 @@ private fun GroupManagerSheet(
 private fun GroupManagerItemCard(
     itemId: String,
     label: String,
+    depth: Int,
+    treeSize: Int,
+    movesTree: Boolean,
+    onBounds: (Rect) -> Unit,
     onDragWindowY: (Float) -> Unit,
     onDropWindowY: (Float) -> Unit,
     onDragCancel: () -> Unit,
@@ -2709,10 +2877,14 @@ private fun GroupManagerItemCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(start = (depth.coerceAtMost(3) * 12).dp)
             .zIndex(if (dragging) 5f else 0f)
             .graphicsLayer { translationY = dragOffsetY }
-            .onGloballyPositioned { coordinates -> cardBounds = coordinates.boundsInWindow() }
-            .pointerInput(itemId) {
+            .onGloballyPositioned { coordinates ->
+                cardBounds = coordinates.boundsInWindow()
+                onBounds(cardBounds)
+            }
+            .pointerInput(itemId, movesTree, treeSize) {
                 var accumulated = 0f
                 var pointerWindowY = 0f
                 detectDragGesturesAfterLongPress(
@@ -2762,14 +2934,32 @@ private fun GroupManagerItemCard(
                 color = DublAccent,
             )
             Spacer(Modifier.width(9.dp))
-            Text(
-                label,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (depth > 0) {
+                Text("↳", color = DublAccent.copy(alpha = 0.80f), fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(5.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (movesTree) {
+                    Text(
+                        "Корень дерева · переносит $treeSize элементов",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DublGold,
+                    )
+                } else if (depth > 0) {
+                    Text(
+                        "Дочерний навык · переносится отдельно",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Spacer(Modifier.width(8.dp))
             Text(
                 "Зажать\nи тянуть",
@@ -2781,6 +2971,132 @@ private fun GroupManagerItemCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillAttributeChoiceSheet(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    onConfirm: (AttributeId) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedAttribute by remember(skill.id) { mutableStateOf(skill.stockAttribute) }
+    val calculation = character.skillCalculationForRoll(skill, selectedAttribute)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .containSheetOverscroll()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("${skill.name}: характеристика", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "По умолчанию выбрана стоковая характеристика умения. Для этого броска можно заменить её на любую другую.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = skillAccent(skill).copy(alpha = 0.055f),
+                border = BorderStroke(1.dp, skillAccent(skill).copy(alpha = 0.30f)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(selectedAttribute.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            calculation.formulaText(skill, showConfiguredOptions = false),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        calculation.total?.let(::signed) ?: "—",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = skillAccent(skill),
+                    )
+                }
+            }
+
+            AttributeId.entries.chunked(2).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    row.forEach { attribute ->
+                        FilterChip(
+                            selected = selectedAttribute == attribute,
+                            onClick = { selectedAttribute = attribute },
+                            modifier = Modifier.weight(1f),
+                            label = {
+                                Text(
+                                    "${attribute.shortTitle} · ${signed(character.attribute(attribute))}",
+                                    maxLines = 1,
+                                )
+                            },
+                        )
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+
+            Button(
+                onClick = { onConfirm(selectedAttribute) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = calculation.total != null,
+            ) {
+                Text("К броску · ${calculation.total?.let(::signed) ?: "—"}")
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DublSkillRollSheet(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    initialAttribute: AttributeId,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val developmentCatalog = remember(context.applicationContext) {
+        DevelopmentCatalogRepository(context.applicationContext).load()
+    }
+    val effectCatalog = remember(context.applicationContext) {
+        SkillEffectCatalogRepository(context.applicationContext).load()
+    }
+    val calculation = character.skillCalculationForRoll(skill, initialAttribute)
+    val effects = remember(character, skill.id, developmentCatalog, effectCatalog) {
+        SkillEffectRules(character, developmentCatalog, effectCatalog).forSkill(skill)
+    }
+    CheckRollSheet(
+        title = skill.name,
+        bonusTitle = "Бонус умения · ${initialAttribute.shortTitle}",
+        checkBonus = calculation.total?.plus(effects.automaticBonus),
+        formulaText = calculation.formulaText(skill, showConfiguredOptions = false),
+        rememberKey = "${skill.id}:${initialAttribute.name}",
+        selectedAttribute = initialAttribute,
+        automaticContributions = effects.automaticContributions,
+        effectOptions = effects.options,
+        effectReminders = effects.reminders,
+        onDismiss = onDismiss,
+    )
+}
+
+
+/** Compatibility path for the dedicated Skills screen, where configured skill
+ * attributes are still edited/remembered in that screen's existing flow. */
 @Composable
 internal fun DublSkillRollSheet(
     character: DublCharacter,
@@ -2808,7 +3124,7 @@ internal fun DublSkillRollSheet(
         bonusTitle = "Бонус умения",
         checkBonus = calculation.total?.plus(effects.automaticBonus),
         formulaText = calculation.formulaText(skill),
-        rememberKey = skill.id,
+        rememberKey = "skills-screen:${skill.id}",
         attributeOptions = skill.attributes,
         selectedAttribute = selectedAttribute,
         automaticContributions = effects.automaticContributions,
@@ -2873,8 +3189,10 @@ private fun CheckRollSheet(
         result = null
     }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(

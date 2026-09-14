@@ -1,43 +1,15 @@
 package com.dubl.character.android.ui.components
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.unit.Velocity
 
+/**
+ * Shared sheet-content interaction hook.
+ *
+ * Material3 already owns nested scroll for ModalBottomSheet. Consuming residual
+ * vertical scroll here makes the sheet fight its own drag gesture and causes the
+ * intermittent "jerk" users reported. Keep only keyboard dismissal and let the
+ * sheet receive all remaining scroll/fling deltas.
+ */
 @Composable
-fun Modifier.containSheetOverscroll(): Modifier {
-    val connection = remember {
-        object : NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                val consumedY = sheetContentOverscrollToConsume(
-                    availableY = available.y,
-                    fromUserInput = source == NestedScrollSource.UserInput,
-                )
-                return if (consumedY == 0f) Offset.Zero else Offset(0f, consumedY)
-            }
-
-            override suspend fun onPostFling(
-                consumed: Velocity,
-                available: Velocity,
-            ): Velocity {
-                val consumedY = sheetContentOverscrollToConsume(
-                    availableY = available.y,
-                    fromUserInput = true,
-                )
-                return if (consumedY == 0f) Velocity.Zero else Velocity(0f, consumedY)
-            }
-        }
-    }
-    return this
-        .dismissKeyboardOnPointerDown()
-        .nestedScroll(connection)
-}
+fun Modifier.containSheetOverscroll(): Modifier = dismissKeyboardOnPointerDown()

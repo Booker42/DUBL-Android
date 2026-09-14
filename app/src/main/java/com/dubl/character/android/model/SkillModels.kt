@@ -67,6 +67,8 @@ data class ResolvedSkill(
     val isBuiltIn: Boolean
         get() = definition != null && !definition.template && id == definition.id
     val isDynamic: Boolean get() = !isBuiltIn
+    val stockAttribute: AttributeId
+        get() = definition?.defaultAttribute ?: attributes.first()
 }
 
 data class SkillContribution(val label: String, val value: Int)
@@ -77,8 +79,8 @@ data class SkillCalculation(
     val unavailableReason: String = "",
     val selectedAttribute: AttributeId? = null,
 ) {
-    fun formulaText(skill: ResolvedSkill): String = buildString {
-        if (skill.attributes.size > 1) {
+    fun formulaText(skill: ResolvedSkill, showConfiguredOptions: Boolean = true): String = buildString {
+        if (showConfiguredOptions && skill.attributes.size > 1) {
             append("Характеристика: ")
             append(selectedAttribute?.title ?: skill.attributes.first().title)
             append('\n').append("Варианты: ")
@@ -202,7 +204,23 @@ fun DublCharacter.skillCalculation(
     val selectedAttribute = attribute
         ?.takeIf { it in skill.attributes }
         ?: skill.attributes.first()
+    return skillCalculationWithSelectedAttribute(skill, selectedAttribute)
+}
 
+/**
+ * Per-roll override used by the character sheet. DUBL checks can call for a
+ * different characteristic than the skill's configured/default one, so this
+ * path intentionally accepts any core characteristic for this single roll.
+ */
+fun DublCharacter.skillCalculationForRoll(
+    skill: ResolvedSkill,
+    attribute: AttributeId,
+): SkillCalculation = skillCalculationWithSelectedAttribute(skill, attribute)
+
+private fun DublCharacter.skillCalculationWithSelectedAttribute(
+    skill: ResolvedSkill,
+    selectedAttribute: AttributeId,
+): SkillCalculation {
     val contributions = mutableListOf<SkillContribution>()
     var total = attribute(selectedAttribute)
     contributions += SkillContribution(selectedAttribute.title, total)

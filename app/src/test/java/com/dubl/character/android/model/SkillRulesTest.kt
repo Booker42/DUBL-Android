@@ -46,6 +46,28 @@ class SkillRulesTest {
         assertEquals(6, character.skillCalculation(skill, AttributeId.DEXTERITY).total)
     }
 
+
+    @Test
+    fun rollAttributeOverrideUsesStockDefaultButCanChooseAnyAttribute() {
+        val state = CharacterSkill(
+            id = "athletics",
+            definitionId = "athletics",
+            rank = 2,
+            attributes = listOf(AttributeId.DEXTERITY),
+        )
+        val character = character(
+            AttributeId.STRENGTH to 3,
+            AttributeId.DEXTERITY to 4,
+            AttributeId.CHARISMA to 6,
+            skills = mapOf("athletics" to state),
+        )
+        val skill = character.resolveSkill("athletics")!!
+
+        assertEquals(AttributeId.STRENGTH, skill.stockAttribute)
+        assertEquals(8, character.skillCalculationForRoll(skill, AttributeId.CHARISMA).total)
+        assertEquals(AttributeId.CHARISMA, character.skillCalculationForRoll(skill, AttributeId.CHARISMA).selectedAttribute)
+    }
+
     @Test
     fun untrainedMinusTwoPenaltyIsAppliedAtRankZero() {
         val character = character(AttributeId.DEXTERITY to 4)

@@ -438,4 +438,43 @@ class DevelopmentRulesTest {
         assertTrue(complete.availability(technique).canIncrease)
     }
 
+
+    @Test
+    fun ownedMartialTechniqueIsNestedUnderOwnedStyle() {
+        val boxing = child.copy(
+            id = "martial-boxing-tree",
+            name = "Бокс",
+            section = "Боевые искусства",
+            category = "Рукопашные",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "-",
+            tags = listOf("Боевые искусства", "Боевой стиль"),
+        )
+        val hook = child.copy(
+            id = "martial-hook-tree",
+            name = "Хук",
+            section = "Боевые искусства",
+            category = "Общие приёмы",
+            costType = DevelopmentCostType.XP,
+            accessId = null,
+            requirements = "Боевые искусства: Бокс",
+            tags = listOf("Боевые искусства", "Приём"),
+        )
+        val localCatalog = DevelopmentCatalog("test", listOf(boxing, hook))
+        val progress = DevelopmentProgress(
+            mapOf(
+                boxing.id to OwnedDevelopment(rank = 1),
+                hook.id to OwnedDevelopment(rank = 1),
+            )
+        )
+        val section = DevelopmentRules(character(), localCatalog, progress)
+            .ownedSheetSections()
+            .single { it.type == DevelopmentSheetSectionType.MARTIAL_ARTS }
+
+        assertEquals(listOf(boxing.id, hook.id), section.items.map { it.entry.id })
+        assertEquals(boxing.id, section.items[1].parentId)
+        assertEquals(1, section.items[1].depth)
+    }
+
 }
