@@ -471,7 +471,7 @@ def update_development_catalog(catalog_path: Path, style_entries: list[dict], te
     ids = [entry["id"] for entry in imported]
     if len(ids) != len(set(ids)):
         raise ValueError("Generated martial-art IDs are not unique")
-    root["version"] = "0.11.0"
+    root["version"] = "0.12.0"
     root["entries"] = existing + imported
     catalog_path.write_text(json.dumps(root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -490,24 +490,29 @@ def parse_magic_schools(raw: str) -> list[str]:
 
 
 def parse_archmage_additions(source: Path) -> list[dict]:
-    """Parse only the explicit additional-spell blocks from the Archmage book.
+    """Parse supported extra spell definitions from the Archmage book.
 
-    The stock spell definitions use Heading 5. The additions are numbered Heading 3
-    entries followed by one metadata paragraph, so this deliberately does not ingest
-    or overwrite the already-shipped stock catalogue.
+    Most additions are numbered Heading 3 blocks. A small set of Battle Magic
+    additions is formatted as Heading 5 with all metadata in the following paragraph.
+    We accept either form only when that next paragraph is a complete definition;
+    this avoids re-importing stock Heading 5 spells whose metadata is split across
+    several paragraphs.
     """
     doc = Document(source)
     additions: list[dict] = []
     paragraphs = doc.paragraphs
     for index, paragraph in enumerate(paragraphs[:-1]):
         heading = clean(paragraph.text)
-        if paragraph.style.name != "Heading 3" or not re.match(r"^\d+\.\s+", heading):
+        style_name = paragraph.style.name
+        numbered_addition = style_name == "Heading 3" and bool(re.match(r"^\d+\.\s+", heading))
+        inline_heading_addition = style_name == "Heading 5"
+        if not numbered_addition and not inline_heading_addition:
             continue
         body = paragraphs[index + 1].text.strip()
         if "Школа:" not in body or "Стоимость:" not in body or "Описание:" not in body:
             continue
 
-        name = clean(re.sub(r"^\d+\.\s*", "", heading))
+        name = clean(re.sub(r"^\d+\.\s*", "", heading)) if numbered_addition else heading
         school_raw = field_value(body, "Школа", ["Стоимость", "Время сотворения", "Дальность", "Область", "Действие", "Длительность", "Описание", "Усиление"])
         schools = parse_magic_schools(school_raw)
         if not schools or any(school not in ANDROID_MAGIC_SCHOOLS for school in schools):
@@ -559,7 +564,7 @@ def update_magic_catalog(catalog_path: Path, additions: list[dict]) -> int:
     baseline = [entry for entry in root.get("spells", []) if not str(entry.get("id", "")).startswith("archmage_")]
     existing_names = {normalize(entry.get("name", "")) for entry in baseline}
     imported = [entry for entry in additions if normalize(entry["name"]) not in existing_names]
-    root["version"] = "android-0.4"
+    root["version"] = "android-0.6"
     root["spells"] = baseline + imported
     catalog_path.write_text(json.dumps(root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return len(imported)
@@ -596,8 +601,8 @@ def main() -> None:
 
     if args.archmage:
         additions = parse_archmage_additions(args.archmage)
-        if len(additions) != 54:
-            raise SystemExit(f"Expected 54 additional spells from implemented schools, parsed {len(additions)}")
+        if len(additions) != 59:
+            raise SystemExit(f"Expected 59 additional spells from implemented schools, parsed {len(additions)}")
         imported = update_magic_catalog(args.magic_catalog, additions)
         print(f"Imported {imported} Archmage additions from {len(additions)} eligible definitions.")
 

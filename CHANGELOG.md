@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6 — Gameplay sheet groups and content repair
+
+- Replaced Favorite Checks on the Character sheet with every learned skill (rank 1+) in compact two-column cards.
+- Added persistent per-character custom groups for learned skills and acquired developments, including collapse state, manual group ordering, and long-press drag movement between adjacent groups.
+- Reduced Character-sheet scrolling by collapsing combat quick checks by default and using denser semantic-color sections.
+- Kept long skill names readable with two-line compact cards and preserved tap-to-roll behavior.
+- Re-audited the 3.69 rulebook development catalogue: restored swallowed entries, repaired neighboring descriptions/requirements, and retained Improvised Tools and Workshop on the Knee in the Master Craftsman branch.
+- Corrected Blocking prerequisites to Agility 3 OR Speed 3, plus Cold Weapons 3 OR Unarmed Combat 3.
+- Extended the Archmage importer to include five complete Heading 5 Battle Magic additions, including Raven King Blade, while continuing to filter unsupported schools.
+- Added offline regression tests for grouping persistence, Archmage Heading 5 import, catalog integrity, and the reported content bugs.
+- Bumped the default Android version to `0.6`.
+
 ## 0.5.1 — Android compile hotfix
 
 - Fixed missing model extension imports for Chi access and rule-aware roll presets in Android UI/controller code.

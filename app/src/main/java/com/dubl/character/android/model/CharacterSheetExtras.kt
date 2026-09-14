@@ -108,7 +108,8 @@ enum class CharacterSheetResourceId(val title: String) {
 data class CharacterSheetExtras(
     val portraitUri: String? = null,
     val activeConditions: Set<CharacterConditionId> = emptySet(),
-    val favoriteSkillIds: List<String> = emptyList(),
     val hiddenResourceIds: Set<CharacterSheetResourceId> = emptySet(),
     val preferredSkillAttributes: Map<String, AttributeId> = emptyMap(),
+    val skillGroups: List<SheetGroup> = emptyList(),
+    val developmentGroups: List<SheetGroup> = emptyList(),
 )

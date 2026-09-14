@@ -10,6 +10,7 @@ import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,8 +64,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -85,6 +88,8 @@ import com.dubl.character.android.model.DublCharacter
 import com.dubl.character.android.model.CustomResource
 import com.dubl.character.android.model.DevelopmentCatalog
 import com.dubl.character.android.model.DevelopmentEntry
+import com.dubl.character.android.model.DevelopmentSheetItem
+import com.dubl.character.android.model.DevelopmentSheetSection
 import com.dubl.character.android.model.DevelopmentSheetSectionType
 import com.dubl.character.android.model.DevelopmentProgress
 import com.dubl.character.android.model.DevelopmentRules
@@ -97,6 +102,9 @@ import com.dubl.character.android.model.RollFollowUp
 import com.dubl.character.android.model.RollMode
 import com.dubl.character.android.model.RollResult
 import com.dubl.character.android.model.RollTargetOutcome
+import com.dubl.character.android.model.SheetGroup
+import com.dubl.character.android.model.SheetGroupingRules
+import com.dubl.character.android.model.SkillCategory
 import com.dubl.character.android.model.SkillEffectDefinition
 import com.dubl.character.android.model.SkillEffectRules
 import com.dubl.character.android.model.SkillRollEffectOption
@@ -159,6 +167,9 @@ private data class RecentChange(
     val token: Long = System.nanoTime(),
 )
 
+private const val SKILL_UNGROUPED_ID = "skills:ungrouped"
+private const val DEVELOPMENT_UNGROUPED_ID = "development:ungrouped"
+
 private data class StatInfo(
     val id: StatId,
     val value: String,
@@ -193,7 +204,8 @@ fun OverviewScreen(controller: CharacterController) {
     var showAdvancedEdit by remember { mutableStateOf(false) }
     var showConditions by remember { mutableStateOf(false) }
     var selectedCondition by remember { mutableStateOf<CharacterConditionId?>(null) }
-    var showFavoritePicker by remember { mutableStateOf(false) }
+    var showSkillGroupManager by remember { mutableStateOf(false) }
+    var showDevelopmentGroupManager by remember { mutableStateOf(false) }
     var selectedSkillId by remember { mutableStateOf<String?>(null) }
     var selectedDevelopmentId by remember(character.id) { mutableStateOf<String?>(null) }
     var selectedResource by remember { mutableStateOf<CharacterResource?>(null) }
@@ -260,7 +272,7 @@ fun OverviewScreen(controller: CharacterController) {
             if (character.enduranceCurrent == 0) add(CharacterConditionId.WEAKNESS)
         }
     }
-    val favoriteSkills = sheetExtras.favoriteSkillIds.mapNotNull { character.resolveSkill(it) }
+    val trainedSkills = character.resolvedSkills().filter { it.rank > 0 }
 
     fun undoLast() {
         when (val action = recentChange?.undo) {
@@ -353,11 +365,13 @@ fun OverviewScreen(controller: CharacterController) {
             }
 
             item {
-                FavoriteSkillsSection(
+                OwnedSkillsSection(
                     character = character,
-                    favoriteSkills = favoriteSkills,
+                    skills = trainedSkills,
+                    savedGroups = sheetExtras.skillGroups,
                     preferredAttributes = sheetExtras.preferredSkillAttributes,
-                    onConfigure = { showFavoritePicker = true },
+                    onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
+                    onConfigure = { showSkillGroupManager = true },
                     onSkillClick = { selectedSkillId = it.id },
                 )
             }
@@ -366,6 +380,9 @@ fun OverviewScreen(controller: CharacterController) {
                 OwnedDevelopmentSection(
                     character = character,
                     catalog = developmentCatalog,
+                    savedGroups = sheetExtras.developmentGroups,
+                    onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
+                    onConfigure = { showDevelopmentGroupManager = true },
                     onEntryClick = { selectedDevelopmentId = it.id },
                 )
             }
@@ -497,28 +514,40 @@ fun OverviewScreen(controller: CharacterController) {
         )
     }
 
-    if (showFavoritePicker) {
-        FavoriteSkillsSheet(
-            character = character,
-            selectedIds = sheetExtras.favoriteSkillIds,
-            onToggle = { skillId ->
-                val current = sheetExtras.favoriteSkillIds
-                val next = if (skillId in current) current - skillId else current + skillId
-                saveExtras(sheetExtras.copy(favoriteSkillIds = next))
-            },
-            onMove = { skillId, delta ->
-                val current = sheetExtras.favoriteSkillIds.toMutableList()
-                val from = current.indexOf(skillId)
-                if (from >= 0) {
-                    val to = (from + delta).coerceIn(0, current.lastIndex)
-                    if (to != from) {
-                        val item = current.removeAt(from)
-                        current.add(to, item)
-                        saveExtras(sheetExtras.copy(favoriteSkillIds = current))
-                    }
-                }
-            },
-            onDismiss = { showFavoritePicker = false },
+    if (showSkillGroupManager) {
+        val defaults = defaultSkillGroups(trainedSkills)
+        val normalized = SheetGroupingRules.normalize(
+            sheetExtras.skillGroups,
+            defaults,
+            trainedSkills.map { it.id },
+            SKILL_UNGROUPED_ID,
+        )
+        GroupManagerSheet(
+            title = "Группы умений",
+            groups = normalized,
+            itemLabels = trainedSkills.associate { it.id to it.name },
+            ungroupedId = SKILL_UNGROUPED_ID,
+            onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
+            onDismiss = { showSkillGroupManager = false },
+        )
+    }
+
+    if (showDevelopmentGroupManager) {
+        val owned = ownedDevelopmentItems(character, developmentCatalog)
+        val defaults = defaultDevelopmentGroups(character, developmentCatalog)
+        val normalized = SheetGroupingRules.normalize(
+            sheetExtras.developmentGroups,
+            defaults,
+            owned.map { it.entry.id },
+            DEVELOPMENT_UNGROUPED_ID,
+        )
+        GroupManagerSheet(
+            title = "Группы навыков",
+            groups = normalized,
+            itemLabels = owned.associate { it.entry.id to it.entry.name },
+            ungroupedId = DEVELOPMENT_UNGROUPED_ID,
+            onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
+            onDismiss = { showDevelopmentGroupManager = false },
         )
     }
 
@@ -1395,22 +1424,34 @@ private fun QuickChecksSection(onRoll: (RollContext) -> Unit) {
         RollContext.KNOCKDOWN,
         RollContext.BREAK_ITEM,
     )
+    var expanded by remember { mutableStateOf(false) }
     DublCard(Modifier.fillMaxWidth()) {
-        Text("Быстрые проверки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(
-            "Бросок без боевого состояния: цель/СЛ при необходимости вводится вручную.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        contexts.chunked(2).forEach { rowContexts ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                rowContexts.forEach { context ->
-                    OutlinedButton(
-                        onClick = { onRoll(context) },
-                        modifier = Modifier.weight(1f),
-                    ) { Text(context.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Боевые проверки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    if (expanded) "Без боевого состояния; цель/СЛ вводится вручную." else "${contexts.size} быстрых действий · свернуто",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Свернуть" else "Открыть") }
+        }
+        if (expanded) {
+            Spacer(Modifier.height(7.dp))
+            contexts.chunked(2).forEach { rowContexts ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    rowContexts.forEach { context ->
+                        OutlinedButton(
+                            onClick = { onRoll(context) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(context.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                    if (rowContexts.size == 1) Spacer(Modifier.weight(1f))
                 }
-                if (rowContexts.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -1684,158 +1725,111 @@ private fun runMultiplier(character: DublCharacter): Double = if (character.legs
     }
 }
 
-@Composable
-private fun FavoriteSkillsSection(
+private fun defaultSkillGroups(skills: List<ResolvedSkill>): List<SheetGroup> = SkillCategory.entries.mapNotNull { category ->
+    val ids = skills.filter { it.category == category }.map { it.id }
+    ids.takeIf { it.isNotEmpty() }?.let { SheetGroup("skills:${category.name}", category.title, it) }
+}
+
+private fun developmentSheetSections(
     character: DublCharacter,
-    favoriteSkills: List<ResolvedSkill>,
+    catalog: DevelopmentCatalog,
+): List<DevelopmentSheetSection> = DevelopmentRules(
+    character,
+    catalog,
+    DevelopmentProgress(character.development),
+).ownedSheetSections()
+
+private fun ownedDevelopmentItems(
+    character: DublCharacter,
+    catalog: DevelopmentCatalog,
+): List<DevelopmentSheetItem> = developmentSheetSections(character, catalog).flatMap { it.items }.distinctBy { it.entry.id }
+
+private fun defaultDevelopmentGroups(
+    character: DublCharacter,
+    catalog: DevelopmentCatalog,
+): List<SheetGroup> = developmentSheetSections(character, catalog).map { section ->
+    SheetGroup(
+        id = "development:${section.type.name}",
+        title = developmentSectionTitle(section.type),
+        itemIds = section.items.map { it.entry.id },
+    )
+}
+
+private fun developmentSectionTitle(type: DevelopmentSheetSectionType): String = when (type) {
+    DevelopmentSheetSectionType.REGULAR -> "Обычные навыки"
+    DevelopmentSheetSectionType.SPECIAL -> "Спец. навыки"
+    DevelopmentSheetSectionType.MARTIAL_ARTS -> "Боевые искусства"
+    DevelopmentSheetSectionType.CHI -> "ЦИ"
+}
+
+@Composable
+private fun OwnedSkillsSection(
+    character: DublCharacter,
+    skills: List<ResolvedSkill>,
+    savedGroups: List<SheetGroup>,
     preferredAttributes: Map<String, AttributeId>,
+    onGroupsChanged: (List<SheetGroup>) -> Unit,
     onConfigure: () -> Unit,
     onSkillClick: (ResolvedSkill) -> Unit,
 ) {
+    val groups = SheetGroupingRules.normalize(
+        savedGroups,
+        defaultSkillGroups(skills),
+        skills.map { it.id },
+        SKILL_UNGROUPED_ID,
+    )
+    LaunchedEffect(groups, savedGroups) {
+        if (groups != savedGroups) onGroupsChanged(groups)
+    }
+    val byId = skills.associateBy { it.id }
+
     Column {
         SectionTitle(
-            title = "Избранные проверки",
-            trailing = if (favoriteSkills.isEmpty()) "Добавить" else "Настроить",
-            onTrailingClick = onConfigure,
+            title = "Умения",
+            trailing = if (skills.isEmpty()) "Нет взятых" else "Группы · ${skills.size}",
+            onTrailingClick = onConfigure.takeIf { skills.isNotEmpty() },
         )
-        Spacer(Modifier.height(8.dp))
-
-        if (favoriteSkills.isEmpty()) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClick = onConfigure),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)),
-            ) {
-                Text(
-                    text = "Добавьте любые умения. Ограничения по количеству нет.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                favoriteSkills.forEach { skill ->
-                    FavoriteSkillTile(
-                        character = character,
-                        skill = skill,
-                        preferredAttribute = preferredAttributes[skill.id],
-                        onClick = { onSkillClick(skill) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(7.dp))
+        if (skills.isEmpty()) {
             Text(
-                text = "Тап по умению — быстрый бросок",
-                style = MaterialTheme.typography.labelMedium,
+                "Здесь появятся все умения с рангом 1 и выше.",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            return@Column
         }
-    }
-}
 
-@Composable
-private fun FavoriteSkillTile(
-    character: DublCharacter,
-    skill: ResolvedSkill,
-    preferredAttribute: AttributeId?,
-    onClick: () -> Unit,
-) {
-    val selected = preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.firstOrNull()
-    val calculation = selected?.let { character.skillCalculation(skill, it) }
-    val bonus = calculation?.total?.let(::signed) ?: "—"
-    Surface(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = DublGold.copy(alpha = 0.04f),
-        border = BorderStroke(1.dp, DublGold.copy(alpha = 0.30f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                skill.name,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        groups.forEachIndexed { groupIndex, group ->
+            if (groupIndex > 0) Spacer(Modifier.height(8.dp))
+            val groupSkills = group.itemIds.mapNotNull(byId::get)
+            SheetGroupHeader(
+                title = group.title,
+                count = groupSkills.size,
+                collapsed = group.collapsed,
+                accent = groupSkills.firstOrNull()?.let(::skillAccent) ?: DublAccent,
+                onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
             )
-            Text("Ранг ${skill.rank}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(10.dp))
-            Text(bonus, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = DublGold)
-        }
-    }
-}
-
-@Composable
-private fun OwnedDevelopmentSection(
-    character: DublCharacter,
-    catalog: DevelopmentCatalog,
-    onEntryClick: (DevelopmentEntry) -> Unit,
-) {
-    val rules = DevelopmentRules(character, catalog, DevelopmentProgress(character.development))
-    val sections = rules.ownedSheetSections()
-    if (sections.isEmpty()) return
-
-    Column {
-        SectionTitle("Взятые навыки", trailing = "${sections.sumOf { it.items.size }}")
-        Spacer(Modifier.height(6.dp))
-        sections.forEachIndexed { sectionIndex, section ->
-            if (sectionIndex > 0) Spacer(Modifier.height(8.dp))
-            Text(
-                text = when (section.type) {
-                    DevelopmentSheetSectionType.REGULAR -> "Обычные"
-                    DevelopmentSheetSectionType.SPECIAL -> "Спец. навыки"
-                    DevelopmentSheetSectionType.MARTIAL_ARTS -> "Боевые искусства"
-                    DevelopmentSheetSectionType.CHI -> "ЦИ"
-                },
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = DublGold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                section.items.forEachIndexed { index, item ->
-                    if (item.depth == 0 && index > 0) Spacer(Modifier.height(3.dp))
-                    val invalid = rules.requirements(item.entry).any { it.status != RequirementStatus.OK }
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = (item.depth * 12).dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onEntryClick(item.entry) },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (item.depth == 0) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                        border = BorderStroke(
-                            1.dp,
-                            if (invalid) DublDanger.copy(alpha = 0.65f)
-                            else if (item.depth > 0) DublGold.copy(alpha = 0.22f)
-                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-                        ),
-                    ) {
+            if (!group.collapsed) {
+                Spacer(Modifier.height(5.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    groupSkills.chunked(2).forEach { rowSkills ->
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
                         ) {
-                            Text(
-                                item.entry.name,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if (item.depth == 0) FontWeight.SemiBold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                "Ранг ${item.rank}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (invalid) DublDanger else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            rowSkills.forEach { skill ->
+                                CompactSkillTile(
+                                    character = character,
+                                    skill = skill,
+                                    preferredAttribute = preferredAttributes[skill.id],
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { onSkillClick(skill) },
+                                    onDragStep = { direction ->
+                                        onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, skill.id, direction))
+                                    },
+                                )
+                            }
+                            if (rowSkills.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -1843,11 +1837,260 @@ private fun OwnedDevelopmentSection(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Тап по навыку — подробности",
+            "Тап — бросок · зажмите карточку и тяните вверх/вниз для сортировки и переноса между группами",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun SheetGroupHeader(
+    title: String,
+    count: Int,
+    collapsed: Boolean,
+    accent: Color,
+    onToggle: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(9.dp))
+            .clickable(onClick = onToggle),
+        shape = RoundedCornerShape(9.dp),
+        color = accent.copy(alpha = 0.055f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.30f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (collapsed) "▸" else "▾",
+                color = accent,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactSkillTile(
+    character: DublCharacter,
+    skill: ResolvedSkill,
+    preferredAttribute: AttributeId?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onDragStep: (Int) -> Unit,
+) {
+    val selected = preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.firstOrNull()
+    val calculation = selected?.let { character.skillCalculation(skill, it) }
+    val bonus = calculation?.total?.let(::signed) ?: "—"
+    val accent = skillAccent(skill)
+    val threshold = with(LocalDensity.current) { 46.dp.toPx() }
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .pointerInput(skill.id, threshold) {
+                var accumulated = 0f
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { accumulated = 0f },
+                    onDragEnd = { accumulated = 0f },
+                    onDragCancel = { accumulated = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        accumulated += dragAmount.y
+                        while (kotlin.math.abs(accumulated) >= threshold) {
+                            val direction = if (accumulated > 0f) 1 else -1
+                            onDragStep(direction)
+                            accumulated -= threshold * direction
+                        }
+                    },
+                )
+            }
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = accent.copy(alpha = 0.045f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.34f)),
+    ) {
+        Column(Modifier.padding(horizontal = 9.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    skill.name,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    bonus,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                )
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "Ранг ${skill.rank}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun skillAccent(skill: ResolvedSkill): Color = when (skill.category) {
+    SkillCategory.COMBAT -> DublDanger
+    SkillCategory.PHYSICAL -> DublStamina
+    SkillCategory.FIELD -> Color(0xFF71A492)
+    SkillCategory.SOCIAL -> DublAccent
+    SkillCategory.KNOWLEDGE -> DublMana
+    SkillCategory.TECHNICAL -> DublGold
+    SkillCategory.CUSTOM -> Color(0xFF8E80B5)
+}
+
+@Composable
+private fun OwnedDevelopmentSection(
+    character: DublCharacter,
+    catalog: DevelopmentCatalog,
+    savedGroups: List<SheetGroup>,
+    onGroupsChanged: (List<SheetGroup>) -> Unit,
+    onConfigure: () -> Unit,
+    onEntryClick: (DevelopmentEntry) -> Unit,
+) {
+    val rules = DevelopmentRules(character, catalog, DevelopmentProgress(character.development))
+    val items = rules.ownedSheetSections().flatMap { it.items }.distinctBy { it.entry.id }
+    if (items.isEmpty()) return
+    val groups = SheetGroupingRules.normalize(
+        savedGroups,
+        defaultDevelopmentGroups(character, catalog),
+        items.map { it.entry.id },
+        DEVELOPMENT_UNGROUPED_ID,
+    )
+    LaunchedEffect(groups, savedGroups) {
+        if (groups != savedGroups) onGroupsChanged(groups)
+    }
+    val byId = items.associateBy { it.entry.id }
+
+    Column {
+        SectionTitle("Взятые навыки", trailing = "Группы · ${items.size}", onTrailingClick = onConfigure)
+        Spacer(Modifier.height(7.dp))
+        groups.forEachIndexed { groupIndex, group ->
+            if (groupIndex > 0) Spacer(Modifier.height(8.dp))
+            val groupItems = group.itemIds.mapNotNull(byId::get)
+            SheetGroupHeader(
+                title = group.title,
+                count = groupItems.size,
+                collapsed = group.collapsed,
+                accent = groupItems.firstOrNull()?.entry?.let(::developmentAccent) ?: DublGold,
+                onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
+            )
+            if (!group.collapsed) {
+                Spacer(Modifier.height(5.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    groupItems.forEach { item ->
+                        val invalid = rules.requirements(item.entry).any { it.status != RequirementStatus.OK }
+                        CompactDevelopmentTile(
+                            item = item,
+                            invalid = invalid,
+                            onClick = { onEntryClick(item.entry) },
+                            onDragStep = { direction ->
+                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, item.entry.id, direction))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Тап — подробности · зажмите карточку и тяните вверх/вниз для группировки",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun CompactDevelopmentTile(
+    item: DevelopmentSheetItem,
+    invalid: Boolean,
+    onClick: () -> Unit,
+    onDragStep: (Int) -> Unit,
+) {
+    val accent = if (invalid) DublDanger else developmentAccent(item.entry)
+    val threshold = with(LocalDensity.current) { 42.dp.toPx() }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(9.dp))
+            .pointerInput(item.entry.id, threshold) {
+                var accumulated = 0f
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { accumulated = 0f },
+                    onDragEnd = { accumulated = 0f },
+                    onDragCancel = { accumulated = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        accumulated += dragAmount.y
+                        while (kotlin.math.abs(accumulated) >= threshold) {
+                            val direction = if (accumulated > 0f) 1 else -1
+                            onDragStep(direction)
+                            accumulated -= threshold * direction
+                        }
+                    },
+                )
+            }
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(9.dp),
+        color = accent.copy(alpha = 0.04f),
+        border = BorderStroke(1.dp, accent.copy(alpha = if (invalid) 0.62f else 0.30f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                item.entry.name,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "${item.rank}",
+                style = MaterialTheme.typography.labelLarge,
+                color = accent,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+private fun developmentAccent(entry: DevelopmentEntry): Color = when {
+    entry.isMartialArt -> DublDanger
+    entry.isChiDevelopment -> Color(0xFF8E80B5)
+    entry.isSpecialDevelopment -> DublAccent
+    else -> DublGold
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2158,16 +2401,17 @@ private fun ConditionDetailSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FavoriteSkillsSheet(
-    character: DublCharacter,
-    selectedIds: List<String>,
-    onToggle: (String) -> Unit,
-    onMove: (String, Int) -> Unit,
+private fun GroupManagerSheet(
+    title: String,
+    groups: List<SheetGroup>,
+    itemLabels: Map<String, String>,
+    ungroupedId: String,
+    onGroupsChanged: (List<SheetGroup>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val availableSkills = character.resolvedSkills()
-    val selectedSkills = selectedIds.mapNotNull { character.resolveSkill(it) }
-    val unselectedSkills = availableSkills.filter { it.id !in selectedIds }
+    var newGroupName by remember(title) { mutableStateOf("") }
+    var editingId by remember(title) { mutableStateOf<String?>(null) }
+    var editingName by remember(title) { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2177,124 +2421,139 @@ private fun FavoriteSkillsSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .containSheetOverscroll()
-                .padding(start = 18.dp, end = 18.dp, bottom = 22.dp),
+                .padding(start = 18.dp, end = 18.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("Избранные проверки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "В избранное добавляются только умения. Ограничения по количеству нет.",
-                style = MaterialTheme.typography.bodyMedium,
+                "На листе зажмите карточку и тяните вверх или вниз: так меняется порядок и карточка переносится через границу соседней группы.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Выбрано: ${selectedSkills.size}",
-                style = MaterialTheme.typography.labelLarge,
-                color = DublGold,
-            )
-            Spacer(Modifier.height(10.dp))
 
             LazyColumn(
-                modifier = Modifier.heightIn(max = 540.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.heightIn(max = 430.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                if (selectedSkills.isNotEmpty()) {
-                    item { PickerSectionLabel("Избранные") }
-                    itemsIndexed(selectedSkills, key = { _, skill -> skill.id }) { index, skill ->
-                        FavoriteSkillPickerRow(
-                            character = character,
-                            skill = skill,
-                            checked = true,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < selectedSkills.lastIndex,
-                            onToggle = { onToggle(skill.id) },
-                            onMoveUp = { onMove(skill.id, -1) },
-                            onMoveDown = { onMove(skill.id, 1) },
-                        )
-                    }
-                    item {
-                        Spacer(Modifier.height(6.dp))
-                        PickerSectionLabel("Другие умения")
+                items(groups, key = { it.id }) { group ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)),
+                    ) {
+                        Column(Modifier.padding(horizontal = 9.dp, vertical = 8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (group.collapsed) "▸" else "▾",
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) }
+                                        .padding(6.dp),
+                                    fontWeight = FontWeight.Bold,
+                                    color = DublAccent,
+                                )
+                                Text(
+                                    group.title,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            editingId = group.id
+                                            editingName = group.title
+                                        }
+                                        .padding(vertical = 6.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                TextButton(
+                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, -1)) },
+                                    enabled = groups.indexOf(group) > 0,
+                                ) { Text("↑") }
+                                TextButton(
+                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, 1)) },
+                                    enabled = groups.indexOf(group) < groups.lastIndex,
+                                ) { Text("↓") }
+                                if (group.id != ungroupedId) {
+                                    TextButton(
+                                        onClick = {
+                                            onGroupsChanged(
+                                                SheetGroupingRules.deleteGroup(groups, group.id, ungroupedId),
+                                            )
+                                            if (editingId == group.id) editingId = null
+                                        },
+                                    ) { Text("×", color = DublDanger) }
+                                }
+                            }
+                            if (group.itemIds.isNotEmpty()) {
+                                Text(
+                                    group.itemIds.mapNotNull(itemLabels::get).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            } else {
+                                Text(
+                                    "Пустая группа",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                )
+                            }
+                            if (editingId == group.id) {
+                                Spacer(Modifier.height(7.dp))
+                                OutlinedTextField(
+                                    value = editingName,
+                                    onValueChange = { editingName = it },
+                                    label = { Text("Название группы") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(onClick = { editingId = null }) { Text("Отмена") }
+                                    TextButton(
+                                        onClick = {
+                                            onGroupsChanged(SheetGroupingRules.renameGroup(groups, group.id, editingName))
+                                            editingId = null
+                                        },
+                                    ) { Text("Сохранить") }
+                                }
+                            }
+                        }
                     }
                 }
-                items(unselectedSkills, key = { it.id }) { skill ->
-                    FavoriteSkillPickerRow(
-                        character = character,
-                        skill = skill,
-                        checked = false,
-                        canMoveUp = false,
-                        canMoveDown = false,
-                        onToggle = { onToggle(skill.id) },
-                        onMoveUp = {},
-                        onMoveDown = {},
-                    )
-                }
             }
-        }
-    }
-}
 
-@Composable
-private fun PickerSectionLabel(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(vertical = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Bold,
-        color = DublGold,
-    )
-}
-
-@Composable
-private fun FavoriteSkillPickerRow(
-    character: DublCharacter,
-    skill: ResolvedSkill,
-    checked: Boolean,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onToggle: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-) {
-    val calculations = character.skillCalculationOptions(skill)
-    val bonusText = if (calculations.size == 1) {
-        calculations.first().second.total?.let(::signed) ?: "—"
-    } else {
-        calculations.joinToString(" / ") { (attribute, calculation) ->
-            "${attribute.shortTitle} ${calculation.total?.let(::signed) ?: "—"}"
-        }
-    }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(9.dp),
-        color = if (checked) DublGold.copy(alpha = 0.05f) else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            1.dp,
-            if (checked) DublGold.copy(alpha = 0.42f)
-            else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-        ),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(checked = checked, onCheckedChange = { onToggle() })
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(7.dp))
-                    .clickable(onClick = onToggle)
-                    .padding(vertical = 7.dp),
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            OutlinedTextField(
+                value = newGroupName,
+                onValueChange = { newGroupName = it },
+                label = { Text("Новая группа") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(skill.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = "Бонус $bonusText · Ранг ${skill.rank}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (checked) {
-                TextButton(onClick = onMoveUp, enabled = canMoveUp) { Text("↑") }
-                TextButton(onClick = onMoveDown, enabled = canMoveDown) { Text("↓") }
+                OutlinedButton(
+                    onClick = { onGroupsChanged(emptyList()) },
+                    modifier = Modifier.weight(1f),
+                ) { Text("По умолчанию") }
+                Button(
+                    onClick = {
+                        val id = "user:${System.nanoTime()}"
+                        onGroupsChanged(SheetGroupingRules.addGroup(groups, id, newGroupName))
+                        newGroupName = ""
+                    },
+                    enabled = newGroupName.isNotBlank(),
+                    modifier = Modifier.weight(1f),
+                ) { Text("Создать") }
             }
         }
     }

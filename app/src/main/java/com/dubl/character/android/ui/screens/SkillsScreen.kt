@@ -85,14 +85,6 @@ fun SkillsScreen(controller: CharacterController) {
     var showAdd by remember(character.id) { mutableStateOf(false) }
     var showHidden by remember(character.id) { mutableStateOf(false) }
 
-    fun toggleFavorite(skillId: String) {
-        val current = sheetExtras.favoriteSkillIds
-        val next = if (skillId in current) current - skillId else current + skillId
-        val updated = sheetExtras.copy(favoriteSkillIds = next.distinct())
-        sheetExtras = updated
-        extrasRepository.save(character.id, updated)
-    }
-
     fun rememberSkillAttribute(skillId: String, attribute: AttributeId) {
         val updated = sheetExtras.copy(
             preferredSkillAttributes = sheetExtras.preferredSkillAttributes + (skillId to attribute),
@@ -284,9 +276,7 @@ fun SkillsScreen(controller: CharacterController) {
                         SkillRow(
                             character = character,
                             skill = skill,
-                            isFavorite = skill.id in sheetExtras.favoriteSkillIds,
                             onClick = { selectedSkillId = skill.id },
-                            onFavorite = { toggleFavorite(skill.id) },
                             onRoll = { selectedRollSkillId = skill.id },
                             onBreakdown = { selectedBreakdownSkillId = skill.id },
                             onRank = { selectedRankSkillId = skill.id },
@@ -303,8 +293,6 @@ fun SkillsScreen(controller: CharacterController) {
                 character = character,
                 skill = skill,
                 controller = controller,
-                isFavorite = skill.id in sheetExtras.favoriteSkillIds,
-                onFavorite = { toggleFavorite(skill.id) },
                 onRoll = {
                     selectedSkillId = null
                     selectedRollSkillId = skill.id
@@ -370,9 +358,7 @@ fun SkillsScreen(controller: CharacterController) {
 private fun SkillRow(
     character: DublCharacter,
     skill: ResolvedSkill,
-    isFavorite: Boolean,
     onClick: () -> Unit,
-    onFavorite: () -> Unit,
     onRoll: () -> Unit,
     onBreakdown: () -> Unit,
     onRank: () -> Unit,
@@ -437,13 +423,6 @@ private fun SkillRow(
                 }
 
                 Spacer(Modifier.width(8.dp))
-                MiniSkillAction(
-                    text = if (isFavorite) "★" else "☆",
-                    selected = isFavorite,
-                    accent = DublGold,
-                    onClick = onFavorite,
-                )
-                Spacer(Modifier.width(5.dp))
                 MiniSkillAction(
                     text = "⚄",
                     selected = true,
@@ -716,8 +695,6 @@ private fun SkillDetailSheet(
     character: DublCharacter,
     skill: ResolvedSkill,
     controller: CharacterController,
-    isFavorite: Boolean,
-    onFavorite: () -> Unit,
     onRoll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -745,12 +722,6 @@ private fun SkillDetailSheet(
                         CompactBadge(origin, if (origin == "Своё") DublAccent else DublGold)
                     }
                 }
-                MiniSkillAction(
-                    text = if (isFavorite) "★" else "☆",
-                    selected = isFavorite,
-                    accent = DublGold,
-                    onClick = onFavorite,
-                )
             }
 
             if (skill.description.isNotBlank()) {
