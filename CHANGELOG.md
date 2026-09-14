@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 — Android compile hotfix
+
+- Fixed missing model extension imports for Chi access and rule-aware roll presets in Android UI/controller code.
+- Fixed nullable roll bonus formatting in the shared roll sheet so Debug and Preview Kotlin compilation can proceed.
+- Kept the 0.5 rule/effect catalogs and gameplay behavior unchanged.
+- Bumped the default Android version to `0.5.1`.
+
 ## 0.5 — Rule-aware rolls, Chi techniques, and sheet integration
 
 - Added a reusable roll-context layer for attributes, Reflexes, Initiative, Dodge, raw attacks, Parry, Feint, Grapple, Disarm, Trip, Push, Knockdown, and Break Item checks without introducing combat-state tracking.

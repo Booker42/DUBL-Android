@@ -20,6 +20,7 @@ import com.dubl.character.android.model.OwnedDevelopment
 import com.dubl.character.android.model.SkillCatalog
 import com.dubl.character.android.model.UntrainedRule
 import com.dubl.character.android.model.resolvedSkills
+import com.dubl.character.android.model.developmentRank
 import java.util.UUID
 
 class CharacterController(private val repository: CharacterRepository) {

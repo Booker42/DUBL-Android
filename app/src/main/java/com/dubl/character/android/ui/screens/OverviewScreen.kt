@@ -101,6 +101,8 @@ import com.dubl.character.android.model.SkillEffectDefinition
 import com.dubl.character.android.model.SkillEffectRules
 import com.dubl.character.android.model.SkillRollEffectOption
 import com.dubl.character.android.model.compareRollToTarget
+import com.dubl.character.android.model.developmentNormalize
+import com.dubl.character.android.model.rollPreset
 import com.dubl.character.android.model.rollCheck
 import com.dubl.character.android.model.rollFollowUp
 import com.dubl.character.android.model.resolveSkill
@@ -2625,7 +2627,7 @@ private fun CheckRollSheet(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
                 ) {
                     Text(
-                        text = rollSetupText(mode, effectCount, bonusTitle, effectiveCheckBonus, situationalBonus),
+                        text = rollSetupText(mode, effectCount, bonusTitle, effectiveCheckBonus ?: 0, situationalBonus),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
