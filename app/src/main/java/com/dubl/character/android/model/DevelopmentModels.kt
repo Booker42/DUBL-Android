@@ -42,11 +42,14 @@ data class DevelopmentEntry(
      * and therefore have no separate ability-point access record, but still belong
      * to the special-branch catalogue rather than the ordinary feat list.
      */
+    val isChiDevelopment: Boolean
+        get() = developmentNormalize(section) == "ци" || tags.any { developmentNormalize(it) == "ци" }
+
     val isSpecialDevelopment: Boolean
-        get() = !isMartialArt && (isAbility || accessId != null || developmentNormalize(section) == "ветки способностей")
+        get() = !isMartialArt && !isChiDevelopment && (isAbility || accessId != null || developmentNormalize(section) == "ветки способностей")
 
     val isRegularDevelopment: Boolean
-        get() = !isMartialArt && !isSpecialDevelopment && costType == DevelopmentCostType.XP
+        get() = !isMartialArt && !isChiDevelopment && !isSpecialDevelopment && costType == DevelopmentCostType.XP
 }
 
 data class OwnedDevelopment(
@@ -100,6 +103,8 @@ data class DevelopmentAvailability(
 enum class DevelopmentSheetSectionType {
     REGULAR,
     SPECIAL,
+    MARTIAL_ARTS,
+    CHI,
 }
 
 data class DevelopmentSheetItem(
@@ -222,9 +227,13 @@ class DevelopmentRules(
 
         val regular = ownedEntries.filter { (entry, _) -> entry.isRegularDevelopment }
         val special = ownedEntries.filter { (entry, _) -> entry.isSpecialDevelopment }
+        val martial = ownedEntries.filter { (entry, _) -> entry.isMartialArt }
+        val chi = ownedEntries.filter { (entry, _) -> entry.isChiDevelopment }
         return listOfNotNull(
             buildSection(DevelopmentSheetSectionType.REGULAR, regular),
             buildSection(DevelopmentSheetSectionType.SPECIAL, special),
+            buildSection(DevelopmentSheetSectionType.MARTIAL_ARTS, martial),
+            buildSection(DevelopmentSheetSectionType.CHI, chi),
         )
     }
 

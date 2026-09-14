@@ -274,8 +274,11 @@ object MagicEquipmentRules {
             .sumOf { it.load.coerceAtLeast(0.0) * it.quantity.coerceAtLeast(0) }
     }
 
-    fun equipmentCapacity(character: DublCharacter): Int =
-        (character.strength + character.constitution).coerceAtLeast(0)
+    fun equipmentCapacity(character: DublCharacter): Int {
+        val base = (character.strength + character.constitution).coerceAtLeast(0)
+        val haulerRank = character.developmentRank(DevelopmentEffectIds.HAULER)
+        return (base * (100 + haulerRank * 10)) / 100
+    }
 
     fun burden(character: DublCharacter): BurdenState {
         val load = equipmentLoad(character)

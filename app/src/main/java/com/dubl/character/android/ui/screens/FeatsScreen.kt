@@ -44,10 +44,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dubl.character.android.data.ChiCatalogRepository
 import com.dubl.character.android.data.DevelopmentCatalogRepository
 import com.dubl.character.android.model.CharacterEconomy
 import com.dubl.character.android.model.CharacterEconomyBreakdown
+import com.dubl.character.android.model.ChiRules
+import com.dubl.character.android.model.ChiTechnique
 import com.dubl.character.android.model.DevelopmentCatalog
+import com.dubl.character.android.model.DevelopmentEffectIds
 import com.dubl.character.android.model.DevelopmentEntry
 import com.dubl.character.android.model.DevelopmentProgress
 import com.dubl.character.android.model.DevelopmentRules
@@ -55,6 +59,7 @@ import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.model.RequirementCheck
 import com.dubl.character.android.model.RequirementStatus
 import com.dubl.character.android.model.developmentNormalize
+import com.dubl.character.android.model.developmentRank
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.containSheetOverscroll
 import com.dubl.character.android.ui.components.DublCard
@@ -90,6 +95,9 @@ fun FeatsScreen(controller: CharacterController) {
     val catalog = remember(context.applicationContext) {
         DevelopmentCatalogRepository(context.applicationContext).load()
     }
+    val chiCatalog = remember(context.applicationContext) {
+        ChiCatalogRepository(context.applicationContext).load()
+    }
     val progress = DevelopmentProgress(character.development)
     var query by remember(character.id) { mutableStateOf("") }
     var tab by remember(character.id) { mutableStateOf(DevelopmentTab.REGULAR) }
@@ -102,6 +110,7 @@ fun FeatsScreen(controller: CharacterController) {
         DevelopmentRules(character, catalog, progress)
     }
     val economy = remember(character, catalog) { CharacterEconomy.breakdown(character, catalog) }
+    val chiRules = remember(character, catalog) { ChiRules(character, catalog) }
 
     fun increase(entry: DevelopmentEntry, optionIndex: Int) {
         val availability = rules.availability(entry, optionIndex)
@@ -147,7 +156,7 @@ fun FeatsScreen(controller: CharacterController) {
                     DevelopmentTab.REGULAR -> entry.isRegularDevelopment
                     DevelopmentTab.SPECIAL -> entry.isSpecialDevelopment
                     DevelopmentTab.MARTIAL_ARTS -> entry.isMartialArt
-                    DevelopmentTab.CHI -> false
+                    DevelopmentTab.CHI -> entry.isChiDevelopment
                     DevelopmentTab.OWNED -> progress.rank(entry.id) > 0
                 }
             }
@@ -176,6 +185,16 @@ fun FeatsScreen(controller: CharacterController) {
                 )
             )
             .toList()
+    }
+    val filteredChiTechniques = remember(query, availableOnly, character, chiCatalog, catalog) {
+        val needle = developmentNormalize(query)
+        chiCatalog.techniques.filter { technique ->
+            val matches = needle.isBlank() || developmentNormalize(
+                listOf(technique.name, technique.school, technique.action, technique.effect, technique.requirements).joinToString(" ")
+            ).contains(needle)
+            val availability = chiRules.availability(technique)
+            matches && (!availableOnly || availability.unlocked)
+        }.sortedWith(compareBy<ChiTechnique>({ developmentNormalize(it.school) }, { developmentNormalize(it.name) }))
     }
 
     LazyColumn(
@@ -231,18 +250,71 @@ fun FeatsScreen(controller: CharacterController) {
         }
 
         if (tab == DevelopmentTab.CHI) {
+            val automaticAccess = character.developmentRank(DevelopmentEffectIds.INTERNAL_CHI) > 0
+            val progressionBonus = character.developmentRank(DevelopmentEffectIds.MASTER_CHI) * 2 +
+                character.developmentRank(DevelopmentEffectIds.AWAKENED_CHI) * 3
             item {
                 ChiDevelopmentCard(
-                    enabled = character.chiEnabled,
+                    enabled = character.chiActive,
+                    automaticAccess = automaticAccess,
                     current = character.chiCurrent,
                     maximum = character.chiMaximum,
                     baseMaximum = maxOf(3, character.will + 1),
                     bonusRanks = character.chiBonusRanks,
+                    progressionBonus = progressionBonus,
                     onToggle = controller::setChiEnabled,
                     onChangeCurrent = controller::changeChi,
                     onChangeBonusRanks = { delta -> controller.setChiBonusRanks(character.chiBonusRanks + delta) },
                     onRestore = controller::restoreChi,
                 )
+            }
+            item {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Поиск развития или приёма ЦИ") },
+                    singleLine = true,
+                )
+            }
+            item {
+                FilterChip(
+                    selected = availableOnly,
+                    onClick = { availableOnly = !availableOnly },
+                    label = { Text("Доступно сейчас") },
+                )
+            }
+            item {
+                Text(
+                    "Развитие: ${filteredEntries.size} · Приёмы: ${filteredChiTechniques.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            filteredEntries.groupBy { it.category.ifBlank { "Развитие ЦИ" } }.forEach { (category, entries) ->
+                item(key = "chi-development-header-$category") {
+                    DevelopmentGroupHeader(category, entries.size)
+                }
+                items(entries, key = { "chi-development-${it.id}" }) { entry ->
+                    DevelopmentRow(
+                        entry = entry,
+                        rules = rules,
+                        progress = progress,
+                        onClick = { selectedEntryId = entry.id },
+                    )
+                }
+            }
+            filteredChiTechniques.groupBy { it.school }.forEach { (school, techniques) ->
+                item(key = "chi-technique-header-$school") {
+                    DevelopmentGroupHeader(school, techniques.size, trailing = "Приёмы")
+                }
+                items(techniques, key = { "chi-technique-${it.id}" }) { technique ->
+                    ChiTechniqueCard(
+                        technique = technique,
+                        availability = chiRules.availability(technique),
+                        onUse = { controller.changeChi(-technique.chiCost) },
+                    )
+                }
             }
         } else {
             item {
@@ -383,6 +455,7 @@ fun FeatsScreen(controller: CharacterController) {
                     val regularOwned = filteredEntries.filter { it.isRegularDevelopment }
                     val martialOwned = filteredEntries.filter { it.isMartialArt }
                     val specialOwned = filteredEntries.filter { it.isSpecialDevelopment }
+                    val chiOwned = filteredEntries.filter { it.isChiDevelopment }
 
                 if (regularOwned.isNotEmpty()) {
                     item(key = "owned-regular-header") {
@@ -403,6 +476,20 @@ fun FeatsScreen(controller: CharacterController) {
                         DevelopmentGroupHeader("Боевые искусства", martialOwned.size)
                     }
                     items(martialOwned, key = { "owned-${it.id}" }) { entry ->
+                        OwnedDevelopmentRow(
+                            entry = entry,
+                            progress = progress,
+                            rules = rules,
+                            onClick = { selectedEntryId = entry.id },
+                        )
+                    }
+                }
+
+                if (chiOwned.isNotEmpty()) {
+                    item(key = "owned-chi-header") {
+                        DevelopmentGroupHeader("ЦИ", chiOwned.size)
+                    }
+                    items(chiOwned, key = { "owned-${it.id}" }) { entry ->
                         OwnedDevelopmentRow(
                             entry = entry,
                             progress = progress,
@@ -614,10 +701,12 @@ private fun DevelopmentBudgetCard(economy: CharacterEconomyBreakdown) {
 @Composable
 private fun ChiDevelopmentCard(
     enabled: Boolean,
+    automaticAccess: Boolean,
     current: Int,
     maximum: Int,
     baseMaximum: Int,
     bonusRanks: Int,
+    progressionBonus: Int,
     onToggle: (Boolean) -> Unit,
     onChangeCurrent: (Int) -> Unit,
     onChangeBonusRanks: (Int) -> Unit,
@@ -637,7 +726,19 @@ private fun ChiDevelopmentCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            DublSwitch(checked = enabled, onCheckedChange = onToggle)
+            DublSwitch(
+                checked = enabled,
+                onCheckedChange = if (automaticAccess) null else onToggle,
+                enabled = !automaticAccess,
+            )
+        }
+
+        if (automaticAccess) {
+            Text(
+                "Ресурс открыт способностью «Внутренняя ЦИ» и остаётся активным, пока способность изучена.",
+                style = MaterialTheme.typography.bodySmall,
+                color = DublAccent,
+            )
         }
 
         if (!enabled) {
@@ -701,7 +802,7 @@ private fun ChiDevelopmentCard(
         }
 
         Text(
-            "Максимум: база $baseMaximum (Воля + 1, минимум 3) + $bonusRanks = $maximum.",
+            "Максимум: база $baseMaximum + купленный запас $bonusRanks + развитие $progressionBonus = $maximum.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -710,6 +811,65 @@ private fun ChiDevelopmentCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun ChiTechniqueCard(
+    technique: ChiTechnique,
+    availability: com.dubl.character.android.model.ChiTechniqueAvailability,
+    onUse: () -> Unit,
+) {
+    val unlocked = availability.unlocked
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(13.dp),
+        color = if (unlocked) DublAccent.copy(alpha = 0.035f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f),
+        border = BorderStroke(1.dp, if (unlocked) DublAccent.copy(alpha = 0.20f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(technique.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        listOf(technique.action, "${technique.chiCost} ЦИ").filter { it.isNotBlank() }.joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (unlocked) DublAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    if (unlocked) "Открыт" else "Закрыт",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (unlocked) DublAccent else DublGold,
+                )
+            }
+            if (technique.effect.isNotBlank()) {
+                Text(technique.effect, style = MaterialTheme.typography.bodySmall)
+            }
+            if (!unlocked) {
+                Text(
+                    "Требуется: ${technique.requirements}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DublGold,
+                )
+            } else if (!availability.canUse && availability.reason.isNotBlank()) {
+                Text(availability.reason, style = MaterialTheme.typography.bodySmall, color = DublDanger)
+            }
+            OutlinedButton(
+                onClick = onUse,
+                enabled = availability.canUse,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (technique.chiCost > 0) "Использовать · ${technique.chiCost} ЦИ" else "Использовать · без затрат ЦИ")
+            }
+        }
     }
 }
 

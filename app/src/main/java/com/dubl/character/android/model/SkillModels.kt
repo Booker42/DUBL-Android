@@ -244,4 +244,18 @@ fun DublCharacter.skillCalculationOptions(skill: ResolvedSkill): List<Pair<Attri
     }
 
 fun DublCharacter.skillXpSpent(): Int = resolvedSkills(includeHidden = true)
-    .sumOf { SkillCatalog.costForRank(it.rank) }
+    .sumOf { skillXpCostForRank(it.rank) }
+
+fun DublCharacter.skillXpCostForRank(rank: Int): Int {
+    val normalized = rank.coerceIn(0, 10)
+    val base = SkillCatalog.costForRank(normalized)
+    if (!creationComplete || developmentRank(DevelopmentEffectIds.SELF_TAUGHT) <= 0) return base
+    val discountedPart = SkillCatalog.costForRank(normalized.coerceAtMost(2))
+    return base - discountedPart / 2
+}
+
+fun DublCharacter.skillNextRankCost(currentRank: Int): Int? {
+    val current = currentRank.coerceIn(0, 10)
+    if (current >= 10) return null
+    return skillXpCostForRank(current + 1) - skillXpCostForRank(current)
+}

@@ -103,4 +103,19 @@ class RollRulesTest {
         assertEquals(setOf(0, 3), resolved.chosenIndices)
         assertEquals(3, resolved.total)
     }
+    @Test
+    fun comparesRollAgainstOptionalTargetWithoutChangingRollTotal() {
+        val success = compareRollToTarget(total = 14, target = 11)
+        assertEquals(3, success.margin)
+        assertEquals(RollTargetOutcome.SUCCESS, success.outcome)
+
+        val tie = compareRollToTarget(total = 11, target = 11)
+        assertEquals(0, tie.margin)
+        assertEquals(RollTargetOutcome.TIE, tie.outcome)
+
+        val failure = compareRollToTarget(total = 8, target = 11)
+        assertEquals(-3, failure.margin)
+        assertEquals(RollTargetOutcome.FAILURE, failure.outcome)
+    }
+
 }

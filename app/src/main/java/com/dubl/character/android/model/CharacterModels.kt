@@ -72,12 +72,20 @@ data class DublCharacter(
 
     val equipmentLoadPenalty: Int get() = MagicEquipmentRules.burden(this).penalty
     val defense: Int get() = 10 - size + speed + dexterity + equipmentLoadPenalty
-    val calculatedHealthMaximum: Int get() = (constitution * size + strength).coerceAtLeast(0)
+    val incredibleHealthBonus: Int
+        get() = developmentRank(DevelopmentEffectIds.INCREDIBLE_HEALTH) * incredibleHealthPerRank(size)
+    val calculatedHealthMaximum: Int get() = (constitution * size + strength + incredibleHealthBonus).coerceAtLeast(0)
     val healthMaximum: Int get() = healthMaximumOverride ?: calculatedHealthMaximum
-    val enduranceMaximum: Int get() = enduranceMaximumOverride ?: 3
-    val reflexes: Int get() = speed + dexterity + equipmentLoadPenalty
-    val initiative: Int get() = speed + perception
-    val fortitude: Int get() = constitution + will
+    val enduranceMaximum: Int
+        get() = enduranceMaximumOverride ?: (3 + developmentRank(DevelopmentEffectIds.ENDURING))
+    val reflexes: Int
+        get() = speed + dexterity + equipmentLoadPenalty + developmentRank(DevelopmentEffectIds.QUICK_REFLEXES)
+    val initiative: Int
+        get() = speed + perception + developmentRank(DevelopmentEffectIds.IMPROVED_INITIATIVE) +
+            developmentRank(DevelopmentEffectIds.STORM_LORD_SCHOOL)
+    val fortitude: Int
+        get() = constitution + will + developmentRank(DevelopmentEffectIds.STALWART) +
+            developmentRank(DevelopmentEffectIds.STILL_MOUNTAIN_SCHOOL)
     val effectiveCreationExperience: Int
         get() = when {
             creationExperience > 0 -> creationExperience.coerceAtMost(experience.coerceAtLeast(0))
@@ -88,8 +96,15 @@ data class DublCharacter(
     val abilityPoints: Int get() = abilityPointsOverride ?: recommendedAbilityPoints
     val effectiveManaMaximum: Int
         get() = manaMaximumOverride ?: if (magic.manaRank > 0) MagicEquipmentRules.manaMaximum(this) else manaMaximum.coerceAtLeast(0)
+    val chiActive: Boolean
+        get() = chiEnabled || developmentRank(DevelopmentEffectIds.INTERNAL_CHI) > 0
     val chiMaximum: Int
-        get() = if (chiEnabled) maxOf(3, will + 1) + chiBonusRanks.coerceIn(0, 10) else 0
+        get() = if (chiActive) {
+            maxOf(3, will + 1) +
+                chiBonusRanks.coerceIn(0, 10) +
+                developmentRank(DevelopmentEffectIds.MASTER_CHI) * 2 +
+                developmentRank(DevelopmentEffectIds.AWAKENED_CHI) * 3
+        } else 0
 
     val runBase: Double
         get() = if (legs >= 3) {
@@ -145,7 +160,8 @@ data class DublCharacter(
                     else -> 4.0
                 }
             }
-            return (runBase + speed * multiplier + equipmentLoadPenalty).coerceAtLeast(0.0)
+            val runSpeed = speed + developmentRank(DevelopmentEffectIds.STORM_LORD_SCHOOL)
+            return (runBase + runSpeed * multiplier + equipmentLoadPenalty + developmentRank(DevelopmentEffectIds.RUNNER)).coerceAtLeast(0.0)
         }
 
     fun normalized(): DublCharacter {

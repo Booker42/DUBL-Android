@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.dubl.character.android.data.CharacterSheetExtrasRepository
 import com.dubl.character.android.data.DevelopmentCatalogRepository
+import com.dubl.character.android.data.SkillEffectCatalogRepository
 import com.dubl.character.android.model.AttributeId
 import com.dubl.character.android.model.CharacterConditionId
 import com.dubl.character.android.model.CharacterEconomy
@@ -90,9 +91,16 @@ import com.dubl.character.android.model.DevelopmentRules
 import com.dubl.character.android.model.RequirementStatus
 import com.dubl.character.android.model.MagicEquipmentRules
 import com.dubl.character.android.model.ResolvedSkill
+import com.dubl.character.android.model.RollContribution
+import com.dubl.character.android.model.RollContext
 import com.dubl.character.android.model.RollFollowUp
 import com.dubl.character.android.model.RollMode
 import com.dubl.character.android.model.RollResult
+import com.dubl.character.android.model.RollTargetOutcome
+import com.dubl.character.android.model.SkillEffectDefinition
+import com.dubl.character.android.model.SkillEffectRules
+import com.dubl.character.android.model.SkillRollEffectOption
+import com.dubl.character.android.model.compareRollToTarget
 import com.dubl.character.android.model.rollCheck
 import com.dubl.character.android.model.rollFollowUp
 import com.dubl.character.android.model.resolveSkill
@@ -194,6 +202,7 @@ fun OverviewScreen(controller: CharacterController) {
     var selectedAttribute by remember { mutableStateOf<AttributeId?>(null) }
     var selectedStat by remember { mutableStateOf<StatId?>(null) }
     var showFortitudeRoll by remember { mutableStateOf(false) }
+    var selectedRollContext by remember(character.id) { mutableStateOf<RollContext?>(null) }
     var showResourceVisibility by remember { mutableStateOf(false) }
     var showNameEdit by remember { mutableStateOf(false) }
     var showExperienceEdit by remember { mutableStateOf(false) }
@@ -332,7 +341,13 @@ fun OverviewScreen(controller: CharacterController) {
                     character = character,
                     onStatClick = { selectedStat = it },
                     onFortitudeRoll = { showFortitudeRoll = true },
+                    onReflexesRoll = { selectedRollContext = RollContext.REFLEXES },
+                    onInitiativeRoll = { selectedRollContext = RollContext.INITIATIVE },
                 )
+            }
+
+            item {
+                QuickChecksSection(onRoll = { selectedRollContext = it })
             }
 
             item {
@@ -542,6 +557,15 @@ fun OverviewScreen(controller: CharacterController) {
             formulaText = "2d6 + Стойкость · Стойкость = Телосложение + Воля = ${character.constitution} + ${character.will}",
             rememberKey = "fortitude-${character.id}",
             onDismiss = { showFortitudeRoll = false },
+        )
+    }
+
+    selectedRollContext?.let { rollContext ->
+        ContextRollSheet(
+            character = character,
+            context = rollContext,
+            developmentCatalog = developmentCatalog,
+            onDismiss = { selectedRollContext = null },
         )
     }
 
@@ -1097,7 +1121,7 @@ private fun ResourceStrip(
         if (CharacterSheetResourceId.HEALTH !in hiddenResources) add(CharacterResource.HEALTH)
         if (CharacterSheetResourceId.ENDURANCE !in hiddenResources) add(CharacterResource.ENDURANCE)
         if (character.manaEnabled && CharacterSheetResourceId.MANA !in hiddenResources) add(CharacterResource.MANA)
-        if (character.chiEnabled && CharacterSheetResourceId.CHI !in hiddenResources) add(CharacterResource.CHI)
+        if (character.chiActive && CharacterSheetResourceId.CHI !in hiddenResources) add(CharacterResource.CHI)
     }
 
     if (resources.isEmpty() && character.customResources.isEmpty()) {
@@ -1356,10 +1380,112 @@ private fun RecentChangeBar(
 }
 
 @Composable
+private fun QuickChecksSection(onRoll: (RollContext) -> Unit) {
+    val contexts = listOf(
+        RollContext.DODGE,
+        RollContext.ATTACK,
+        RollContext.PARRY,
+        RollContext.FEINT,
+        RollContext.GRAPPLE,
+        RollContext.DISARM,
+        RollContext.TRIP,
+        RollContext.PUSH,
+        RollContext.KNOCKDOWN,
+        RollContext.BREAK_ITEM,
+    )
+    DublCard(Modifier.fillMaxWidth()) {
+        Text("Быстрые проверки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Бросок без боевого состояния: цель/СЛ при необходимости вводится вручную.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        contexts.chunked(2).forEach { rowContexts ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                rowContexts.forEach { context ->
+                    OutlinedButton(
+                        onClick = { onRoll(context) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text(context.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                if (rowContexts.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContextRollSheet(
+    character: DublCharacter,
+    context: RollContext,
+    developmentCatalog: DevelopmentCatalog,
+    onDismiss: () -> Unit,
+) {
+    val androidContext = LocalContext.current
+    val effectCatalog = remember(androidContext.applicationContext) {
+        SkillEffectCatalogRepository(androidContext.applicationContext).load()
+    }
+    val allowedSkillIds = remember(context) {
+        when (context) {
+            RollContext.ATTACK, RollContext.BREAK_ITEM -> listOf("unarmed", "melee_weapon", "shooting", "throwing")
+            RollContext.PARRY, RollContext.DISARM -> listOf("unarmed", "melee_weapon")
+            RollContext.FEINT -> listOf("eloquence", "unarmed", "melee_weapon")
+            else -> emptyList()
+        }
+    }
+    val skillOptions = allowedSkillIds.mapNotNull(character::resolveSkill)
+    var selectedSkillId by remember(context, character.id) {
+        mutableStateOf(skillOptions.firstOrNull()?.id)
+    }
+    fun attributesFor(skillId: String?): List<AttributeId> = when (context) {
+        RollContext.ATTACK, RollContext.BREAK_ITEM -> when (skillId) {
+            "shooting" -> listOf(AttributeId.PERCEPTION, AttributeId.DEXTERITY)
+            "throwing" -> listOf(AttributeId.DEXTERITY, AttributeId.STRENGTH)
+            "unarmed", "melee_weapon" -> listOf(AttributeId.DEXTERITY, AttributeId.STRENGTH)
+            else -> emptyList()
+        }
+        RollContext.PARRY, RollContext.DISARM -> listOf(AttributeId.DEXTERITY, AttributeId.STRENGTH)
+        RollContext.FEINT -> listOf(AttributeId.CHARISMA)
+        else -> emptyList()
+    }
+    var selectedAttribute by remember(context, selectedSkillId, character.id) {
+        mutableStateOf(attributesFor(selectedSkillId).firstOrNull())
+    }
+    val preset = character.rollPreset(context, selectedSkillId, selectedAttribute)
+    val alreadyAppliedLabels = preset.contributions.map { developmentNormalize(it.label) }.toSet()
+    val reminders = remember(character, context, developmentCatalog, effectCatalog, alreadyAppliedLabels) {
+        SkillEffectRules(character, developmentCatalog, effectCatalog)
+            .forContext(context)
+            .filterNot { developmentNormalize(it.sourceName) in alreadyAppliedLabels }
+    }
+    CheckRollSheet(
+        title = context.title,
+        bonusTitle = "Бонус проверки",
+        checkBonus = preset.bonus,
+        formulaText = preset.formulaText,
+        rememberKey = "context-${character.id}-${context.name}-${selectedSkillId ?: "none"}",
+        skillOptions = skillOptions,
+        selectedSkillId = selectedSkillId,
+        onSkillSelected = { id ->
+            selectedSkillId = id
+            selectedAttribute = attributesFor(id).firstOrNull()
+        },
+        attributeOptions = attributesFor(selectedSkillId),
+        selectedAttribute = selectedAttribute,
+        onAttributeSelected = { selectedAttribute = it },
+        automaticContributions = preset.contributions,
+        effectReminders = reminders,
+        onDismiss = onDismiss,
+    )
+}
+
+@Composable
 private fun KeyStats(
     character: DublCharacter,
     onStatClick: (StatId) -> Unit,
     onFortitudeRoll: () -> Unit,
+    onReflexesRoll: () -> Unit,
+    onInitiativeRoll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         StatId.entries.chunked(3).forEach { rowStats ->
@@ -1375,7 +1501,12 @@ private fun KeyStats(
                         accent = statAccent(stat),
                         modifier = Modifier.weight(1f),
                         onClick = { onStatClick(stat) },
-                        onQuickRoll = if (stat == StatId.FORTITUDE) onFortitudeRoll else null,
+                        onQuickRoll = when (stat) {
+                            StatId.FORTITUDE -> onFortitudeRoll
+                            StatId.REFLEXES -> onReflexesRoll
+                            StatId.INITIATIVE -> onInitiativeRoll
+                            else -> null
+                        },
                     )
                 }
             }
@@ -1659,6 +1790,8 @@ private fun OwnedDevelopmentSection(
                 text = when (section.type) {
                     DevelopmentSheetSectionType.REGULAR -> "Обычные"
                     DevelopmentSheetSectionType.SPECIAL -> "Спец. навыки"
+                    DevelopmentSheetSectionType.MARTIAL_ARTS -> "Боевые искусства"
+                    DevelopmentSheetSectionType.CHI -> "ЦИ"
                 },
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
@@ -2173,18 +2306,31 @@ internal fun DublSkillRollSheet(
     onPreferredAttribute: ((AttributeId) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val developmentCatalog = remember(context.applicationContext) {
+        DevelopmentCatalogRepository(context.applicationContext).load()
+    }
+    val effectCatalog = remember(context.applicationContext) {
+        SkillEffectCatalogRepository(context.applicationContext).load()
+    }
     var selectedAttribute by remember(skill.id, skill.attributes, preferredAttribute) {
         mutableStateOf(preferredAttribute?.takeIf { it in skill.attributes } ?: skill.attributes.first())
     }
     val calculation = character.skillCalculation(skill, selectedAttribute)
+    val effects = remember(character, skill.id, developmentCatalog, effectCatalog) {
+        SkillEffectRules(character, developmentCatalog, effectCatalog).forSkill(skill)
+    }
     CheckRollSheet(
         title = skill.name,
         bonusTitle = "Бонус умения",
-        checkBonus = calculation.total,
+        checkBonus = calculation.total?.plus(effects.automaticBonus),
         formulaText = calculation.formulaText(skill),
         rememberKey = skill.id,
         attributeOptions = skill.attributes,
         selectedAttribute = selectedAttribute,
+        automaticContributions = effects.automaticContributions,
+        effectOptions = effects.options,
+        effectReminders = effects.reminders,
         onAttributeSelected = {
             selectedAttribute = it
             onPreferredAttribute?.invoke(it)
@@ -2201,26 +2347,42 @@ private fun CheckRollSheet(
     checkBonus: Int?,
     formulaText: String,
     rememberKey: Any,
+    skillOptions: List<ResolvedSkill> = emptyList(),
+    selectedSkillId: String? = null,
+    onSkillSelected: ((String) -> Unit)? = null,
     attributeOptions: List<AttributeId> = emptyList(),
     selectedAttribute: AttributeId? = null,
+    automaticContributions: List<RollContribution> = emptyList(),
+    effectOptions: List<SkillRollEffectOption> = emptyList(),
+    effectReminders: List<SkillEffectDefinition> = emptyList(),
     onAttributeSelected: ((AttributeId) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     var advantageCount by remember(rememberKey) { mutableStateOf(0) }
     var hindranceCount by remember(rememberKey) { mutableStateOf(0) }
     var situationalText by remember(rememberKey) { mutableStateOf("0") }
+    var targetText by remember(rememberKey) { mutableStateOf("") }
+    var selectedEffectIds by remember(rememberKey) { mutableStateOf(setOf<String>()) }
     var result by remember(rememberKey) { mutableStateOf<RollResult?>(null) }
     val scrollState = rememberScrollState()
 
     val situationalBonus = situationalText.toIntOrNull()?.coerceIn(-99, 99) ?: 0
+    val targetValue = targetText.toIntOrNull()?.coerceIn(-999, 999)
+    val selectedEffects = effectOptions.filter { it.id in selectedEffectIds }
+    val effectNumericBonus = selectedEffects.sumOf { it.numericBonus }
+    val selectedAdvantage = selectedEffects.sumOf { it.advantageDice }
+    val selectedHindrance = selectedEffects.sumOf { it.hindranceDice }
+    val effectiveCheckBonus = checkBonus?.plus(effectNumericBonus)
+    val totalAdvantage = advantageCount + selectedAdvantage
+    val totalHindrance = hindranceCount + selectedHindrance
     val mode = when {
-        advantageCount > 0 -> RollMode.ADVANTAGE
-        hindranceCount > 0 -> RollMode.HINDRANCE
+        totalAdvantage > 0 -> RollMode.ADVANTAGE
+        totalHindrance > 0 -> RollMode.HINDRANCE
         else -> RollMode.NORMAL
     }
     val effectCount = when (mode) {
-        RollMode.ADVANTAGE -> advantageCount
-        RollMode.HINDRANCE -> hindranceCount
+        RollMode.ADVANTAGE -> totalAdvantage
+        RollMode.HINDRANCE -> totalHindrance
         RollMode.NORMAL -> 0
     }
 
@@ -2242,9 +2404,9 @@ private fun CheckRollSheet(
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                text = checkBonus?.let { "$bonusTitle: ${signed(it)}" } ?: "Проверка недоступна",
+                text = effectiveCheckBonus?.let { "$bonusTitle: ${signed(it)}" } ?: "Проверка недоступна",
                 style = MaterialTheme.typography.titleMedium,
-                color = if (checkBonus != null) DublGold else DublAccent,
+                color = if (effectiveCheckBonus != null) DublGold else DublAccent,
             )
             Spacer(Modifier.height(6.dp))
             Text(
@@ -2252,6 +2414,101 @@ private fun CheckRollSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (automaticContributions.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Автоматические эффекты", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = DublAccent)
+                automaticContributions.forEach { contribution ->
+                    Text(
+                        "${contribution.label}: ${signed(contribution.value)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (effectOptions.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text("Ситуационные эффекты навыков", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(5.dp))
+                effectOptions.forEach { option ->
+                    val selected = option.id in selectedEffectIds
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            val next = selectedEffectIds.toMutableSet()
+                            if (!next.add(option.id)) {
+                                next.remove(option.id)
+                            } else if (option.advantageDice > 0) {
+                                effectOptions.filter { it.hindranceDice > 0 }.forEach { next.remove(it.id) }
+                                hindranceCount = 0
+                            } else if (option.hindranceDice > 0) {
+                                effectOptions.filter { it.advantageDice > 0 }.forEach { next.remove(it.id) }
+                                advantageCount = 0
+                            }
+                            selectedEffectIds = next
+                            invalidateResult()
+                        },
+                        label = {
+                            val suffix = when {
+                                option.numericBonus != 0 -> " (${signed(option.numericBonus)})"
+                                option.advantageDice > 0 -> " (+${option.advantageDice} преимущество)"
+                                option.hindranceDice > 0 -> " (+${option.hindranceDice} помеха)"
+                                else -> ""
+                            }
+                            Text(option.label + suffix)
+                        },
+                    )
+                    if (selected && option.description.isNotBlank()) {
+                        Text(
+                            option.description,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+            }
+            if (effectReminders.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = DublGold.copy(alpha = 0.035f),
+                    border = BorderStroke(1.dp, DublGold.copy(alpha = 0.20f)),
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Связанные правила", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = DublGold)
+                        effectReminders.forEach { effect ->
+                            Text(
+                                "${effect.sourceName}: ${effect.effectText}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (skillOptions.size > 1 && onSkillSelected != null) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Умение для проверки",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(skillOptions, key = { it.id }) { option ->
+                        FilterChip(
+                            selected = selectedSkillId == option.id,
+                            onClick = {
+                                onSkillSelected(option.id)
+                                invalidateResult()
+                            },
+                            label = { Text(option.name) },
+                        )
+                    }
+                }
+            }
 
             if (attributeOptions.size > 1 && onAttributeSelected != null) {
                 Spacer(Modifier.height(12.dp))
@@ -2294,6 +2551,7 @@ private fun CheckRollSheet(
                     onPlus = {
                         advantageCount += 1
                         hindranceCount = 0
+                        selectedEffectIds = selectedEffectIds - effectOptions.filter { it.hindranceDice > 0 }.map { it.id }.toSet()
                         invalidateResult()
                     },
                 )
@@ -2308,6 +2566,7 @@ private fun CheckRollSheet(
                     onPlus = {
                         hindranceCount += 1
                         advantageCount = 0
+                        selectedEffectIds = selectedEffectIds - effectOptions.filter { it.advantageDice > 0 }.map { it.id }.toSet()
                         invalidateResult()
                     },
                 )
@@ -2338,6 +2597,19 @@ private fun CheckRollSheet(
                     },
                     singleLine = true,
                 )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = targetText,
+                    onValueChange = { raw ->
+                        targetText = raw.filter { it.isDigit() || it == '-' }.take(4)
+                        invalidateResult()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("СЛ / результат противника (необязательно)") },
+                    supportingText = { Text("Нужен только для автоматического сравнения результата") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
                 Spacer(Modifier.height(5.dp))
                 Text(
                     text = "Преимущества и помехи не смешиваются автоматически: выбор одного типа сбрасывает другой, потому что книга не описывает их совместное разрешение.",
@@ -2353,7 +2625,7 @@ private fun CheckRollSheet(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
                 ) {
                     Text(
-                        text = rollSetupText(mode, effectCount, bonusTitle, checkBonus, situationalBonus),
+                        text = rollSetupText(mode, effectCount, bonusTitle, effectiveCheckBonus, situationalBonus),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2366,7 +2638,7 @@ private fun CheckRollSheet(
                         result = rollCheck(
                             mode = mode,
                             effectCount = effectCount,
-                            checkBonus = checkBonus,
+                            checkBonus = effectiveCheckBonus ?: 0,
                             checkBonusLabel = bonusTitle,
                             situationalBonus = situationalBonus,
                         )
@@ -2397,6 +2669,23 @@ private fun CheckRollSheet(
                             fontWeight = FontWeight.Bold,
                             color = DublGold,
                         )
+                        targetValue?.let { target ->
+                            val comparison = compareRollToTarget(roll.total, target)
+                            Text(
+                                text = when (comparison.outcome) {
+                                    RollTargetOutcome.SUCCESS -> "Выше цели на ${comparison.margin}"
+                                    RollTargetOutcome.TIE -> "Равно цели · разница 0"
+                                    RollTargetOutcome.FAILURE -> "Ниже цели на ${kotlin.math.abs(comparison.margin)}"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = when (comparison.outcome) {
+                                    RollTargetOutcome.SUCCESS -> DublAccent
+                                    RollTargetOutcome.TIE -> DublGold
+                                    RollTargetOutcome.FAILURE -> DublDanger
+                                },
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                         Text(
                             text = rollResultCaption(roll),
                             style = MaterialTheme.typography.labelLarge,
@@ -2683,9 +2972,9 @@ private fun ResourceVisibilitySheet(
             )
             ResourceVisibilityRow(
                 title = CharacterSheetResourceId.CHI.title,
-                visible = character.chiEnabled && CharacterSheetResourceId.CHI !in hidden,
-                enabled = character.chiEnabled,
-                subtitle = if (character.chiEnabled) null else "ЦИ отключена у персонажа",
+                visible = character.chiActive && CharacterSheetResourceId.CHI !in hidden,
+                enabled = character.chiActive,
+                subtitle = if (character.chiActive) null else "ЦИ недоступна у персонажа",
                 onToggle = { onToggle(CharacterSheetResourceId.CHI) },
             )
             if (character.customResources.isNotEmpty()) {

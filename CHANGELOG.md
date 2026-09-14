@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5 — Rule-aware rolls, Chi techniques, and sheet integration
+
+- Added a reusable roll-context layer for attributes, Reflexes, Initiative, Dodge, raw attacks, Parry, Feint, Grapple, Disarm, Trip, Push, Knockdown, and Break Item checks without introducing combat-state tracking.
+- Added optional DC/opponent-result comparison to the shared roll sheet and preserved the existing advantage, hindrance, doubles, and critical follow-up rules.
+- Added a data-driven 283-entry skill-effect catalog based on the approved 0.5 review, with automatic bonuses, named situational toggles, advantage/hindrance options, and linked-rule reminders.
+- Wired passive development effects into real character math, including Incredible Health, Stalwart, Enduring, Quick Reflexes, Improved Initiative, Runner, Hauler, Self-Taught, and selected unambiguous Chi-school passives.
+- Scoped contextual bonuses correctly: Fencer applies to Parry rather than ordinary melee attacks, and Feinter applies only to Feint.
+- Expanded Chi from a resource-only feature into a rules domain with 27 purchasable Chi developments, 9 schools, and 68 techniques imported deterministically from Masters of Melee.
+- Chi techniques now show requirements, availability, action/cost text, and can spend Chi directly when usable; Internal Chi automatically activates the resource and Chi progression can raise its maximum.
+- Added acquired Martial Arts and Chi development as dedicated Character-sheet groups using the same compact interaction pattern as special development.
+- Added deterministic 0.5 import tests and pure-model coverage for derived effects, Chi access, roll contexts, target comparison, and skill-effect resolution.
+- Kept ambiguous Block calculation and stateful combat effects out of automatic resolution until their rule/state dependencies are explicit.
+- Bumped the default Android version to `0.5`.
+
 ## 0.4 — Martial arts, Chi, and Archmage expansion
 
 - Added Martial Arts as a dedicated Development tab and XP-only progression domain, separate from ordinary and special development.

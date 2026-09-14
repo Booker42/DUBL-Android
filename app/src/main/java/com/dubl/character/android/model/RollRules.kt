@@ -160,3 +160,28 @@ fun chooseDiceIndices(
 }
 
 private fun rollD6(): Int = Random.nextInt(1, 7)
+
+enum class RollTargetOutcome {
+    SUCCESS,
+    TIE,
+    FAILURE,
+}
+
+data class RollTargetComparison(
+    val target: Int,
+    val margin: Int,
+    val outcome: RollTargetOutcome,
+)
+
+fun compareRollToTarget(total: Int, target: Int): RollTargetComparison {
+    val margin = total - target
+    return RollTargetComparison(
+        target = target,
+        margin = margin,
+        outcome = when {
+            margin > 0 -> RollTargetOutcome.SUCCESS
+            margin < 0 -> RollTargetOutcome.FAILURE
+            else -> RollTargetOutcome.TIE
+        },
+    )
+}

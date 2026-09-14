@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val appVersionName = providers.environmentVariable("DUBL_VERSION_NAME").orNull ?: "0.4"
-val appVersionCode = providers.environmentVariable("DUBL_VERSION_CODE").orNull?.toIntOrNull() ?: 4000000
+val appVersionName = providers.environmentVariable("DUBL_VERSION_NAME").orNull ?: "0.5"
+val appVersionCode = providers.environmentVariable("DUBL_VERSION_CODE").orNull?.toIntOrNull() ?: 5000000
 val releaseKeystorePath = providers.environmentVariable("DUBL_KEYSTORE_PATH").orNull
 val releaseKeystorePassword = providers.environmentVariable("DUBL_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("DUBL_KEY_ALIAS").orNull
