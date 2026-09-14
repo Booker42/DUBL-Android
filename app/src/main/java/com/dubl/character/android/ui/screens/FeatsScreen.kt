@@ -186,6 +186,14 @@ fun FeatsScreen(controller: CharacterController) {
             )
             .toList()
     }
+    val martialAvailabilityById = remember(tab, filteredEntries, rules) {
+        if (tab == DevelopmentTab.MARTIAL_ARTS) {
+            filteredEntries.associate { entry -> entry.id to rules.availability(entry) }
+        } else {
+            emptyMap()
+        }
+    }
+
     val filteredChiTechniques = remember(query, availableOnly, character, chiCatalog, catalog) {
         val needle = developmentNormalize(query)
         chiCatalog.techniques.filter { technique ->
@@ -443,6 +451,7 @@ fun FeatsScreen(controller: CharacterController) {
                                 entry = entry,
                                 rules = rules,
                                 progress = progress,
+                                availabilityOverride = martialAvailabilityById[entry.id],
                                 onClick = { selectedEntryId = entry.id },
                             )
                         }
@@ -973,7 +982,8 @@ private fun OwnedDevelopmentRow(
     onClick: () -> Unit,
 ) {
     val rank = progress.rank(entry.id)
-    val invalidOwned = rules.availability(entry).checks.any { it.status != RequirementStatus.OK }
+    val ownedAvailability = remember(entry.id, rules) { rules.availability(entry) }
+    val invalidOwned = ownedAvailability.checks.any { it.status != RequirementStatus.OK }
     val accent = when {
         invalidOwned -> DublDanger
         entry.isSpecialDevelopment -> DublGold
@@ -1053,9 +1063,12 @@ private fun DevelopmentRow(
     entry: DevelopmentEntry,
     rules: DevelopmentRules,
     progress: DevelopmentProgress,
+    availabilityOverride: com.dubl.character.android.model.DevelopmentAvailability? = null,
     onClick: () -> Unit,
 ) {
-    val availability = rules.availability(entry)
+    val availability = remember(entry.id, rules, availabilityOverride) {
+        availabilityOverride ?: rules.availability(entry)
+    }
     val rank = progress.rank(entry.id)
     val owned = rank > 0
     val invalidOwned = owned && availability.checks.any { it.status != RequirementStatus.OK }

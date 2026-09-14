@@ -5,8 +5,8 @@ import org.junit.Test
 
 class SheetInteractionPolicyTest {
     @Test
-    fun userOverscrollIsConsumedBeforeItCanDragParentSheet() {
-        assertEquals(18f, sheetContentOverscrollToConsume(18f, fromUserInput = true), 0f)
+    fun downwardUserOverscrollIsReleasedToParentSheet() {
+        assertEquals(0f, sheetContentOverscrollToConsume(18f, fromUserInput = true), 0f)
         assertEquals(-11f, sheetContentOverscrollToConsume(-11f, fromUserInput = true), 0f)
     }
 

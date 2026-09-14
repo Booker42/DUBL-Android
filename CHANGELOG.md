@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1 — Character-sheet performance and mobile interaction polish
+
+- Reworked learned skills and acquired developments on the Character sheet into true lazy list items so long sheets no longer compose every card inside one parent item while scrolling.
+- Switched acquired developments on the Character sheet to the same compact two-column layout as learned skills to reduce vertical scrolling.
+- Precomputed Martial Arts availability for the visible catalog state and memoized row availability to avoid repeated prerequisite work while scrolling the large martial catalog.
+- Fixed modal bottom-sheet nested scrolling so a downward drag at the top of sheet content is handed back to the sheet and can dismiss it from the content area, not only from the drag handle.
+- Added app- and sheet-level focus clearing so tapping away from text input dismisses the mobile keyboard; group name fields also expose an explicit Done IME action.
+- Rebuilt the group editor with larger labeled controls, visible item cards, an explicit drag handle, highlighted drop targets, and real long-press drag-and-drop between groups.
+- Added regression coverage for sheet gesture policy, two-column layout, cross-group movement, keyboard-dismiss wiring, and Martial Arts scroll caching.
+- Bumped the default Android version to `0.6.1`.
+
 ## 0.6 — Gameplay sheet groups and content repair
 
 - Replaced Favorite Checks on the Character sheet with every learned skill (rank 1+) in compact two-column cards.

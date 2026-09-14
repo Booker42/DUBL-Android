@@ -28,8 +28,16 @@ fun Modifier.containSheetOverscroll(): Modifier {
             override suspend fun onPostFling(
                 consumed: Velocity,
                 available: Velocity,
-            ): Velocity = if (available.y == 0f) Velocity.Zero else Velocity(0f, available.y)
+            ): Velocity {
+                val consumedY = sheetContentOverscrollToConsume(
+                    availableY = available.y,
+                    fromUserInput = true,
+                )
+                return if (consumedY == 0f) Velocity.Zero else Velocity(0f, consumedY)
+            }
         }
     }
-    return nestedScroll(connection)
+    return this
+        .dismissKeyboardOnPointerDown()
+        .nestedScroll(connection)
 }

@@ -29,10 +29,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -51,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -61,14 +64,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,6 +128,7 @@ import com.dubl.character.android.model.skillCalculation
 import com.dubl.character.android.model.skillCalculationOptions
 import com.dubl.character.android.state.CharacterController
 import com.dubl.character.android.ui.components.containSheetOverscroll
+import com.dubl.character.android.ui.components.compactGridRows
 import com.dubl.character.android.ui.components.DublCard
 import com.dubl.character.android.ui.components.DublSwitch
 import com.dubl.character.android.ui.theme.DublAccent
@@ -272,7 +282,48 @@ fun OverviewScreen(controller: CharacterController) {
             if (character.enduranceCurrent == 0) add(CharacterConditionId.WEAKNESS)
         }
     }
-    val trainedSkills = character.resolvedSkills().filter { it.rank > 0 }
+    val trainedSkills = remember(character) { character.resolvedSkills().filter { it.rank > 0 } }
+    val normalizedSkillGroups = remember(trainedSkills, sheetExtras.skillGroups) {
+        SheetGroupingRules.normalize(
+            sheetExtras.skillGroups,
+            defaultSkillGroups(trainedSkills),
+            trainedSkills.map { it.id },
+            SKILL_UNGROUPED_ID,
+        )
+    }
+    LaunchedEffect(normalizedSkillGroups, sheetExtras.skillGroups) {
+        if (normalizedSkillGroups != sheetExtras.skillGroups) {
+            saveExtras(sheetExtras.copy(skillGroups = normalizedSkillGroups))
+        }
+    }
+    val trainedSkillsById = remember(trainedSkills) { trainedSkills.associateBy { it.id } }
+
+    val overviewDevelopmentRules = remember(character, developmentCatalog) {
+        DevelopmentRules(character, developmentCatalog, DevelopmentProgress(character.development))
+    }
+    val overviewDevelopmentItems = remember(character, developmentCatalog) {
+        overviewDevelopmentRules.ownedSheetSections().flatMap { it.items }.distinctBy { it.entry.id }
+    }
+    val normalizedDevelopmentGroups = remember(overviewDevelopmentItems, sheetExtras.developmentGroups, character, developmentCatalog) {
+        SheetGroupingRules.normalize(
+            sheetExtras.developmentGroups,
+            defaultDevelopmentGroups(character, developmentCatalog),
+            overviewDevelopmentItems.map { it.entry.id },
+            DEVELOPMENT_UNGROUPED_ID,
+        )
+    }
+    LaunchedEffect(normalizedDevelopmentGroups, sheetExtras.developmentGroups) {
+        if (normalizedDevelopmentGroups != sheetExtras.developmentGroups) {
+            saveExtras(sheetExtras.copy(developmentGroups = normalizedDevelopmentGroups))
+        }
+    }
+    val overviewDevelopmentById = remember(overviewDevelopmentItems) { overviewDevelopmentItems.associateBy { it.entry.id } }
+    val invalidOverviewDevelopmentIds = remember(overviewDevelopmentItems, overviewDevelopmentRules) {
+        overviewDevelopmentItems.asSequence()
+            .filter { item -> overviewDevelopmentRules.requirements(item.entry).any { it.status != RequirementStatus.OK } }
+            .map { it.entry.id }
+            .toSet()
+    }
 
     fun undoLast() {
         when (val action = recentChange?.undo) {
@@ -298,7 +349,7 @@ fun OverviewScreen(controller: CharacterController) {
             modifier = Modifier.fillMaxSize(),
             state = listState,
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 CharacterHero(
@@ -364,28 +415,26 @@ fun OverviewScreen(controller: CharacterController) {
                 QuickChecksSection(onRoll = { selectedRollContext = it })
             }
 
-            item {
-                OwnedSkillsSection(
-                    character = character,
-                    skills = trainedSkills,
-                    savedGroups = sheetExtras.skillGroups,
-                    preferredAttributes = sheetExtras.preferredSkillAttributes,
-                    onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
-                    onConfigure = { showSkillGroupManager = true },
-                    onSkillClick = { selectedSkillId = it.id },
-                )
-            }
+            ownedSkillSectionItems(
+                character = character,
+                skills = trainedSkills,
+                groups = normalizedSkillGroups,
+                byId = trainedSkillsById,
+                preferredAttributes = sheetExtras.preferredSkillAttributes,
+                onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(skillGroups = groups)) },
+                onConfigure = { showSkillGroupManager = true },
+                onSkillClick = { selectedSkillId = it.id },
+            )
 
-            item {
-                OwnedDevelopmentSection(
-                    character = character,
-                    catalog = developmentCatalog,
-                    savedGroups = sheetExtras.developmentGroups,
-                    onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
-                    onConfigure = { showDevelopmentGroupManager = true },
-                    onEntryClick = { selectedDevelopmentId = it.id },
-                )
-            }
+            ownedDevelopmentSectionItems(
+                items = overviewDevelopmentItems,
+                groups = normalizedDevelopmentGroups,
+                byId = overviewDevelopmentById,
+                invalidIds = invalidOverviewDevelopmentIds,
+                onGroupsChanged = { groups -> saveExtras(sheetExtras.copy(developmentGroups = groups)) },
+                onConfigure = { showDevelopmentGroupManager = true },
+                onEntryClick = { selectedDevelopmentId = it.id },
+            )
         }
 
         if (compactHeroVisible) {
@@ -1762,46 +1811,37 @@ private fun developmentSectionTitle(type: DevelopmentSheetSectionType): String =
     DevelopmentSheetSectionType.CHI -> "ЦИ"
 }
 
-@Composable
-private fun OwnedSkillsSection(
+private fun LazyListScope.ownedSkillSectionItems(
     character: DublCharacter,
     skills: List<ResolvedSkill>,
-    savedGroups: List<SheetGroup>,
+    groups: List<SheetGroup>,
+    byId: Map<String, ResolvedSkill>,
     preferredAttributes: Map<String, AttributeId>,
     onGroupsChanged: (List<SheetGroup>) -> Unit,
     onConfigure: () -> Unit,
     onSkillClick: (ResolvedSkill) -> Unit,
 ) {
-    val groups = SheetGroupingRules.normalize(
-        savedGroups,
-        defaultSkillGroups(skills),
-        skills.map { it.id },
-        SKILL_UNGROUPED_ID,
-    )
-    LaunchedEffect(groups, savedGroups) {
-        if (groups != savedGroups) onGroupsChanged(groups)
-    }
-    val byId = skills.associateBy { it.id }
-
-    Column {
+    item(key = "owned-skills-title") {
         SectionTitle(
             title = "Умения",
             trailing = if (skills.isEmpty()) "Нет взятых" else "Группы · ${skills.size}",
             onTrailingClick = onConfigure.takeIf { skills.isNotEmpty() },
         )
-        Spacer(Modifier.height(7.dp))
-        if (skills.isEmpty()) {
+    }
+    if (skills.isEmpty()) {
+        item(key = "owned-skills-empty") {
             Text(
                 "Здесь появятся все умения с рангом 1 и выше.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            return@Column
         }
+        return
+    }
 
-        groups.forEachIndexed { groupIndex, group ->
-            if (groupIndex > 0) Spacer(Modifier.height(8.dp))
-            val groupSkills = group.itemIds.mapNotNull(byId::get)
+    groups.forEach { group ->
+        val groupSkills = group.itemIds.mapNotNull(byId::get)
+        item(key = "skill-group:${group.id}") {
             SheetGroupHeader(
                 title = group.title,
                 count = groupSkills.size,
@@ -1809,35 +1849,94 @@ private fun OwnedSkillsSection(
                 accent = groupSkills.firstOrNull()?.let(::skillAccent) ?: DublAccent,
                 onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
             )
-            if (!group.collapsed) {
-                Spacer(Modifier.height(5.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    groupSkills.chunked(2).forEach { rowSkills ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        ) {
-                            rowSkills.forEach { skill ->
-                                CompactSkillTile(
-                                    character = character,
-                                    skill = skill,
-                                    preferredAttribute = preferredAttributes[skill.id],
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { onSkillClick(skill) },
-                                    onDragStep = { direction ->
-                                        onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, skill.id, direction))
-                                    },
-                                )
-                            }
-                            if (rowSkills.size == 1) Spacer(Modifier.weight(1f))
-                        }
+        }
+        if (!group.collapsed) {
+            items(
+                items = compactGridRows(groupSkills, columns = 2),
+                key = { row -> "skill-row:${group.id}:${row.joinToString("|") { it.id }}" },
+            ) { rowSkills ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    rowSkills.forEach { skill ->
+                        CompactSkillTile(
+                            character = character,
+                            skill = skill,
+                            preferredAttribute = preferredAttributes[skill.id],
+                            modifier = Modifier.weight(1f),
+                            onClick = { onSkillClick(skill) },
+                            onDragStep = { direction ->
+                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, skill.id, direction))
+                            },
+                        )
                     }
+                    if (rowSkills.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
+    }
+    item(key = "owned-skills-help") {
         Text(
-            "Тап — бросок · зажмите карточку и тяните вверх/вниз для сортировки и переноса между группами",
+            "Тап — бросок · группы и порядок меняются через «Группы»",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun LazyListScope.ownedDevelopmentSectionItems(
+    items: List<DevelopmentSheetItem>,
+    groups: List<SheetGroup>,
+    byId: Map<String, DevelopmentSheetItem>,
+    invalidIds: Set<String>,
+    onGroupsChanged: (List<SheetGroup>) -> Unit,
+    onConfigure: () -> Unit,
+    onEntryClick: (DevelopmentEntry) -> Unit,
+) {
+    if (items.isEmpty()) return
+    item(key = "owned-development-title") {
+        SectionTitle("Взятые навыки", trailing = "Группы · ${items.size}", onTrailingClick = onConfigure)
+    }
+    groups.forEach { group ->
+        val groupItems = group.itemIds.mapNotNull(byId::get)
+        item(key = "development-group:${group.id}") {
+            SheetGroupHeader(
+                title = group.title,
+                count = groupItems.size,
+                collapsed = group.collapsed,
+                accent = groupItems.firstOrNull()?.entry?.let(::developmentAccent) ?: DublGold,
+                onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
+            )
+        }
+        if (!group.collapsed) {
+            items(
+                items = compactGridRows(groupItems, columns = 2),
+                key = { row -> "development-row:${group.id}:${row.joinToString("|") { it.entry.id }}" },
+            ) { rowItems ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    rowItems.forEach { item ->
+                        CompactDevelopmentTile(
+                            item = item,
+                            invalid = item.entry.id in invalidIds,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onEntryClick(item.entry) },
+                            onDragStep = { direction ->
+                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, item.entry.id, direction))
+                            },
+                        )
+                    }
+                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+    item(key = "owned-development-help") {
+        Text(
+            "Тап — подробности · группы и порядок меняются через «Группы»",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1967,79 +2066,17 @@ private fun skillAccent(skill: ResolvedSkill): Color = when (skill.category) {
 }
 
 @Composable
-private fun OwnedDevelopmentSection(
-    character: DublCharacter,
-    catalog: DevelopmentCatalog,
-    savedGroups: List<SheetGroup>,
-    onGroupsChanged: (List<SheetGroup>) -> Unit,
-    onConfigure: () -> Unit,
-    onEntryClick: (DevelopmentEntry) -> Unit,
-) {
-    val rules = DevelopmentRules(character, catalog, DevelopmentProgress(character.development))
-    val items = rules.ownedSheetSections().flatMap { it.items }.distinctBy { it.entry.id }
-    if (items.isEmpty()) return
-    val groups = SheetGroupingRules.normalize(
-        savedGroups,
-        defaultDevelopmentGroups(character, catalog),
-        items.map { it.entry.id },
-        DEVELOPMENT_UNGROUPED_ID,
-    )
-    LaunchedEffect(groups, savedGroups) {
-        if (groups != savedGroups) onGroupsChanged(groups)
-    }
-    val byId = items.associateBy { it.entry.id }
-
-    Column {
-        SectionTitle("Взятые навыки", trailing = "Группы · ${items.size}", onTrailingClick = onConfigure)
-        Spacer(Modifier.height(7.dp))
-        groups.forEachIndexed { groupIndex, group ->
-            if (groupIndex > 0) Spacer(Modifier.height(8.dp))
-            val groupItems = group.itemIds.mapNotNull(byId::get)
-            SheetGroupHeader(
-                title = group.title,
-                count = groupItems.size,
-                collapsed = group.collapsed,
-                accent = groupItems.firstOrNull()?.entry?.let(::developmentAccent) ?: DublGold,
-                onToggle = { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) },
-            )
-            if (!group.collapsed) {
-                Spacer(Modifier.height(5.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    groupItems.forEach { item ->
-                        val invalid = rules.requirements(item.entry).any { it.status != RequirementStatus.OK }
-                        CompactDevelopmentTile(
-                            item = item,
-                            invalid = invalid,
-                            onClick = { onEntryClick(item.entry) },
-                            onDragStep = { direction ->
-                                onGroupsChanged(SheetGroupingRules.moveItemByStep(groups, item.entry.id, direction))
-                            },
-                        )
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Тап — подробности · зажмите карточку и тяните вверх/вниз для группировки",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
 private fun CompactDevelopmentTile(
     item: DevelopmentSheetItem,
     invalid: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onDragStep: (Int) -> Unit,
 ) {
     val accent = if (invalid) DublDanger else developmentAccent(item.entry)
     val threshold = with(LocalDensity.current) { 42.dp.toPx() }
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clip(RoundedCornerShape(9.dp))
             .pointerInput(item.entry.id, threshold) {
                 var accumulated = 0f
@@ -2409,9 +2446,20 @@ private fun GroupManagerSheet(
     onGroupsChanged: (List<SheetGroup>) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
     var newGroupName by remember(title) { mutableStateOf("") }
     var editingId by remember(title) { mutableStateOf<String?>(null) }
     var editingName by remember(title) { mutableStateOf("") }
+    val groupBounds = remember(title) { mutableMapOf<String, Rect>() }
+    var hoveredGroupId by remember(title) { mutableStateOf<String?>(null) }
+
+    fun groupAt(windowY: Float): String? {
+        val direct = groupBounds.entries.firstOrNull { (_, bounds) -> windowY >= bounds.top && windowY <= bounds.bottom }
+        if (direct != null) return direct.key
+        return groupBounds.entries.minByOrNull { (_, bounds) ->
+            kotlin.math.abs(windowY - ((bounds.top + bounds.bottom) / 2f))
+        }?.key
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2421,94 +2469,138 @@ private fun GroupManagerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .containSheetOverscroll()
-                .padding(start = 18.dp, end = 18.dp, bottom = 24.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 22.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(
-                "На листе зажмите карточку и тяните вверх или вниз: так меняется порядок и карточка переносится через границу соседней группы.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = DublAccent.copy(alpha = 0.055f),
+                border = BorderStroke(1.dp, DublAccent.copy(alpha = 0.24f)),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text(
+                        "Как перемещать",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = DublAccent,
+                    )
+                    Text(
+                        "Зажмите карточку за область «≡ Зажать и тянуть» и ведите к нужной группе. Целевая группа подсветится; отпустите карточку, чтобы перенести её.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             LazyColumn(
-                modifier = Modifier.heightIn(max = 430.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.heightIn(max = 500.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+                contentPadding = PaddingValues(bottom = 4.dp),
             ) {
                 items(groups, key = { it.id }) { group ->
+                    DisposableEffect(group.id) {
+                        onDispose { groupBounds.remove(group.id) }
+                    }
+                    val isDropTarget = hoveredGroupId == group.id
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                groupBounds[group.id] = coordinates.boundsInWindow()
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isDropTarget) DublAccent.copy(alpha = 0.055f) else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(
+                            if (isDropTarget) 2.dp else 1.dp,
+                            if (isDropTarget) DublAccent.copy(alpha = 0.72f)
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.42f),
+                        ),
                     ) {
-                        Column(Modifier.padding(horizontal = 9.dp, vertical = 8.dp)) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    if (group.collapsed) "▸" else "▾",
+                                Surface(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable { onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id)) }
-                                        .padding(6.dp),
-                                    fontWeight = FontWeight.Bold,
-                                    color = DublAccent,
-                                )
-                                Text(
-                                    group.title,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(6.dp))
+                                        .clip(RoundedCornerShape(8.dp))
                                         .clickable {
-                                            editingId = group.id
-                                            editingName = group.title
-                                        }
-                                        .padding(vertical = 6.dp),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                TextButton(
-                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, -1)) },
-                                    enabled = groups.indexOf(group) > 0,
-                                ) { Text("↑") }
-                                TextButton(
-                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, 1)) },
-                                    enabled = groups.indexOf(group) < groups.lastIndex,
-                                ) { Text("↓") }
-                                if (group.id != ungroupedId) {
-                                    TextButton(
-                                        onClick = {
-                                            onGroupsChanged(
-                                                SheetGroupingRules.deleteGroup(groups, group.id, ungroupedId),
-                                            )
-                                            if (editingId == group.id) editingId = null
+                                            onGroupsChanged(SheetGroupingRules.toggleCollapsed(groups, group.id))
                                         },
-                                    ) { Text("×", color = DublDanger) }
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = DublAccent.copy(alpha = 0.08f),
+                                ) {
+                                    Text(
+                                        if (group.collapsed) "▸" else "▾",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = DublAccent,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        group.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        "${group.itemIds.size} элементов",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
-                            if (group.itemIds.isNotEmpty()) {
-                                Text(
-                                    group.itemIds.mapNotNull(itemLabels::get).joinToString(" · "),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            } else {
-                                Text(
-                                    "Пустая группа",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        editingId = group.id
+                                        editingName = group.title
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Переименовать", maxLines = 1) }
+                                if (group.id != ungroupedId) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onGroupsChanged(SheetGroupingRules.deleteGroup(groups, group.id, ungroupedId))
+                                            if (editingId == group.id) editingId = null
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("Удалить", color = DublDanger, maxLines = 1) }
+                                }
                             }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                OutlinedButton(
+                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, -1)) },
+                                    enabled = groups.indexOf(group) > 0,
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("↑ Группа выше", maxLines = 1) }
+                                OutlinedButton(
+                                    onClick = { onGroupsChanged(SheetGroupingRules.moveGroup(groups, group.id, 1)) },
+                                    enabled = groups.indexOf(group) < groups.lastIndex,
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("↓ Группа ниже", maxLines = 1) }
+                            }
+
                             if (editingId == group.id) {
-                                Spacer(Modifier.height(7.dp))
                                 OutlinedTextField(
                                     value = editingName,
                                     onValueChange = { editingName = it },
                                     label = { Text("Название группы") },
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                                 Row(
@@ -2520,8 +2612,45 @@ private fun GroupManagerSheet(
                                         onClick = {
                                             onGroupsChanged(SheetGroupingRules.renameGroup(groups, group.id, editingName))
                                             editingId = null
+                                            focusManager.clearFocus()
                                         },
                                     ) { Text("Сохранить") }
+                                }
+                            }
+
+                            if (!group.collapsed) {
+                                if (group.itemIds.isEmpty()) {
+                                    Text(
+                                        "Пустая группа — перетащите сюда карточку из соседней группы.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    group.itemIds.forEach { itemId ->
+                                        GroupManagerItemCard(
+                                            itemId = itemId,
+                                            label = itemLabels[itemId] ?: itemId,
+                                            onDragWindowY = { windowY -> hoveredGroupId = groupAt(windowY) },
+                                            onDragCancel = { hoveredGroupId = null },
+                                            onDropWindowY = { windowY ->
+                                                val targetGroupId = groupAt(windowY)
+                                                hoveredGroupId = null
+                                                if (targetGroupId != null && targetGroupId != group.id) {
+                                                    val target = groups.firstOrNull { it.id == targetGroupId }
+                                                    if (target != null) {
+                                                        onGroupsChanged(
+                                                            SheetGroupingRules.moveItem(
+                                                                groups = groups,
+                                                                itemId = itemId,
+                                                                targetGroupId = targetGroupId,
+                                                                targetIndex = target.itemIds.size,
+                                                            ),
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2535,6 +2664,8 @@ private fun GroupManagerSheet(
                 onValueChange = { newGroupName = it },
                 label = { Text("Новая группа") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(
@@ -2542,7 +2673,10 @@ private fun GroupManagerSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(
-                    onClick = { onGroupsChanged(emptyList()) },
+                    onClick = {
+                        onGroupsChanged(emptyList())
+                        focusManager.clearFocus()
+                    },
                     modifier = Modifier.weight(1f),
                 ) { Text("По умолчанию") }
                 Button(
@@ -2550,11 +2684,99 @@ private fun GroupManagerSheet(
                         val id = "user:${System.nanoTime()}"
                         onGroupsChanged(SheetGroupingRules.addGroup(groups, id, newGroupName))
                         newGroupName = ""
+                        focusManager.clearFocus()
                     },
                     enabled = newGroupName.isNotBlank(),
                     modifier = Modifier.weight(1f),
                 ) { Text("Создать") }
             }
+        }
+    }
+}
+
+@Composable
+private fun GroupManagerItemCard(
+    itemId: String,
+    label: String,
+    onDragWindowY: (Float) -> Unit,
+    onDropWindowY: (Float) -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    var dragOffsetY by remember(itemId) { mutableStateOf(0f) }
+    var dragging by remember(itemId) { mutableStateOf(false) }
+    var cardBounds by remember(itemId) { mutableStateOf(Rect.Zero) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 5f else 0f)
+            .graphicsLayer { translationY = dragOffsetY }
+            .onGloballyPositioned { coordinates -> cardBounds = coordinates.boundsInWindow() }
+            .pointerInput(itemId) {
+                var accumulated = 0f
+                var pointerWindowY = 0f
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { localOffset ->
+                        accumulated = 0f
+                        dragOffsetY = 0f
+                        dragging = true
+                        pointerWindowY = cardBounds.top + localOffset.y
+                        onDragWindowY(pointerWindowY)
+                    },
+                    onDragCancel = {
+                        accumulated = 0f
+                        dragOffsetY = 0f
+                        dragging = false
+                        onDragCancel()
+                    },
+                    onDragEnd = {
+                        dragOffsetY = 0f
+                        dragging = false
+                        onDropWindowY(pointerWindowY)
+                        accumulated = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        accumulated += dragAmount.y
+                        dragOffsetY = accumulated
+                        pointerWindowY += dragAmount.y
+                        onDragWindowY(pointerWindowY)
+                    },
+                )
+            },
+        shape = RoundedCornerShape(10.dp),
+        color = if (dragging) DublAccent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+        border = BorderStroke(
+            1.dp,
+            if (dragging) DublAccent.copy(alpha = 0.75f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.30f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "≡",
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold,
+                color = DublAccent,
+            )
+            Spacer(Modifier.width(9.dp))
+            Text(
+                label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Зажать\nи тянуть",
+                style = MaterialTheme.typography.labelSmall,
+                color = DublAccent,
+                textAlign = TextAlign.End,
+            )
         }
     }
 }

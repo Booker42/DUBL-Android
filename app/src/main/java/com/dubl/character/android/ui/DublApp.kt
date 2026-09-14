@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dubl.character.android.data.CharacterRepository
 import com.dubl.character.android.state.CharacterController
+import com.dubl.character.android.ui.components.dismissKeyboardOnPointerDown
 import com.dubl.character.android.ui.screens.CharactersScreen
 import com.dubl.character.android.ui.screens.EquipmentScreen
 import com.dubl.character.android.ui.screens.FeatsScreen
@@ -68,6 +69,7 @@ fun DublApp() {
     var selected by rememberSaveable { mutableStateOf(AppSection.OVERVIEW) }
 
     Scaffold(
+        modifier = Modifier.dismissKeyboardOnPointerDown(),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             DublBottomBar(
